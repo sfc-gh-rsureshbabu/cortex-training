@@ -97,7 +97,7 @@ def test_stream_chat_sends_stream_request_and_collects_deltas():
         "PAT",
         model=DEPLOYMENT_ID,
         messages=streaming.chat_messages("Hi", system="Be brief."),
-        max_tokens=16,
+        max_completion_tokens=16,
         temperature=0.0,
         on_delta=seen.append,
         session=session,
@@ -118,9 +118,10 @@ def test_stream_chat_sends_stream_request_and_collects_deltas():
             {"role": "system", "content": "Be brief."},
             {"role": "user", "content": "Hi"},
         ],
-        "max_tokens": 16,
+        "max_completion_tokens": 16,
         "temperature": 0.0,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     assert kwargs["headers"]["Authorization"] == "Bearer PAT"
     assert kwargs["headers"]["X-Snowflake-Authorization-Token-Type"] == "PROGRAMMATIC_ACCESS_TOKEN"
@@ -136,14 +137,16 @@ def test_complete_chat_reads_message_content():
         "PAT",
         model=DEPLOYMENT_ID,
         messages=streaming.chat_messages("Hi"),
-        max_tokens=16,
+        max_completion_tokens=16,
         temperature=0.0,
         session=session,
     )
 
     assert result.text == "Hello"
     assert result.time_to_first_token is None
-    assert "stream" not in session.calls[0][1]["json"]
+    sent = session.calls[0][1]["json"]
+    assert "stream" not in sent and "max_tokens" not in sent
+    assert sent["max_completion_tokens"] == 16
 
 
 @pytest.mark.parametrize(
@@ -158,7 +161,7 @@ def test_http_errors_raise_with_status(status, message):
             "PAT",
             model=DEPLOYMENT_ID,
             messages=streaming.chat_messages("Hi"),
-            max_tokens=16,
+            max_completion_tokens=16,
             temperature=0.0,
             session=session,
         )

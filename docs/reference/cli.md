@@ -861,6 +861,10 @@ curl "$BASE_URL/chat/completions" \
   -d '{"model": "sf-ct-DEPLOYMENT_UUID", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
+Limit the reply length with `max_completion_tokens`; `max_tokens` is rejected
+with HTTP 400 (`unsupported_parameter`). `"stream": true` returns server-sent
+events; see [Deploy a Model for Streaming Inference](../guides/inference/deploy-model.md).
+
 `GET $BASE_URL/models` lists the `READY` deployments you own in that schema.
 
 ### Job TUI

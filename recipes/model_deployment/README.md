@@ -73,7 +73,7 @@ Status lines are logged to stderr, and the reply streams to stdout:
 INFO Created sf-ct-DEPLOYMENT_UUID; waiting for READY (this pulls the model and starts vLLM)
 INFO sf-ct-DEPLOYMENT_UUID is READY at https://ACCOUNT.snowflakecomputing.com/api/v2/databases/CORTEX_TRAINING_DB/schemas/PUBLIC/cortex-training/inference/v1
 Streaming shows each token as soon as it is generated, ...
-INFO First token after 0.41s; 87 chunks in 2.10s (finish_reason=stop)
+INFO First token after 0.45s; 64 completion tokens in 0.57s (finish_reason=stop)
 INFO Dropped sf-ct-DEPLOYMENT_UUID
 ```
 
@@ -90,7 +90,7 @@ minutes; the timings above are only illustrative.
 | `timeout` | connection `poll_timeout` | Seconds to wait for `READY` |
 | `prompt` | a short question | User message |
 | `system` | none | Optional system message |
-| `max_tokens` | `256` | Completion token limit |
+| `max_completion_tokens` | `256` | Completion token limit, sent as `max_completion_tokens`; the endpoint rejects `max_tokens` |
 | `temperature` | `0.7` | Sampling temperature |
 | `stream` | `True` | `False` sends one non-streaming request and prints the whole reply |
 | `request_timeout` | `300` | Seconds for the chat request |
@@ -140,5 +140,6 @@ for every rule.
   the checkpoint source yet
   ([known limitation 5](../../docs/reference/rest-api.md#15-known-limitations)).
 
-`last_validated` in `recipe.yaml` is `null`: this recipe has not yet been run
-end to end against a live account.
+`last_validated` in `recipe.yaml` is the date of the last end-to-end run
+against a live account, with the default spec. The live checks of the endpoint
+are `test_tc6_*` in `tests/test_model_deployment_e2e.py`.

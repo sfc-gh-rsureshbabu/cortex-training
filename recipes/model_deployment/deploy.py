@@ -57,7 +57,7 @@ class Config:
 
     prompt: str = "Explain in three sentences why streaming responses feel faster."
     system: str | None = None
-    max_tokens: int = 256
+    max_completion_tokens: int = 256
     temperature: float = 0.7
     stream: bool = True
     request_timeout: float = 300.0
@@ -104,7 +104,7 @@ def main(config: Config) -> None:
             connection["pat"],
             model=deployment_id,
             messages=chat_messages(config.prompt, config.system),
-            max_tokens=config.max_tokens,
+            max_completion_tokens=config.max_completion_tokens,
             temperature=config.temperature,
             verify_ssl=bool(connection.get("verify_ssl", True)),
             timeout=config.request_timeout,
@@ -114,16 +114,22 @@ def main(config: Config) -> None:
             sys.stdout.write("\n")
         else:
             _write_delta(result.text + "\n")
+        completion_tokens = (result.usage or {}).get("completion_tokens")
         if result.time_to_first_token is not None:
             logger.info(
-                "First token after %.2fs; %d chunks in %.2fs (finish_reason=%s)",
+                "First token after %.2fs; %s completion tokens in %.2fs (finish_reason=%s)",
                 result.time_to_first_token,
-                result.chunks,
+                completion_tokens,
                 result.total_seconds,
                 result.finish_reason,
             )
         else:
-            logger.info("Reply in %.2fs (finish_reason=%s)", result.total_seconds, result.finish_reason)
+            logger.info(
+                "Reply in %.2fs; %s completion tokens (finish_reason=%s)",
+                result.total_seconds,
+                completion_tokens,
+                result.finish_reason,
+            )
     finally:
         if created and not config.keep_deployment:
             dropped = client.drop_model_deployment(deployment_id)

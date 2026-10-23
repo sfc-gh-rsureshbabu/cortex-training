@@ -11,4 +11,4 @@ precision:
   - bfloat16
 default_inference_gpus: 1
 provenance: null
-last_validated: null
+last_validated: 2026-10-23

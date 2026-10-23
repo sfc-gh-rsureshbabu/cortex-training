@@ -17,8 +17,9 @@
 
 A deployment serves ``POST {base_url}/chat/completions``. With ``stream=True``
 the response is server-sent events: one ``data: {chunk}`` line per delta, and
-``data: [DONE]`` at the end. Only ``requests`` is needed, so the recipe runs
-without the ``openai`` package.
+``data: [DONE]`` at the end. The endpoint takes ``max_completion_tokens`` and
+rejects ``max_tokens`` (HTTP 400 ``unsupported_parameter``). Only ``requests``
+is needed, so the recipe runs without the ``openai`` package.
 """
 
 from __future__ import annotations
@@ -114,7 +115,7 @@ def stream_chat(
     *,
     model: str,
     messages: list[dict[str, str]],
-    max_tokens: int,
+    max_completion_tokens: int,
     temperature: float,
     on_delta: Any = None,
     verify_ssl: bool = True,
@@ -132,9 +133,11 @@ def stream_chat(
         json={
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
             "stream": True,
+            # Adds a final chunk with no choices that carries the token counts.
+            "stream_options": {"include_usage": True},
         },
         stream=True,
         verify=verify_ssl,
@@ -167,7 +170,7 @@ def complete_chat(
     *,
     model: str,
     messages: list[dict[str, str]],
-    max_tokens: int,
+    max_completion_tokens: int,
     temperature: float,
     verify_ssl: bool = True,
     timeout: float = 300.0,
@@ -182,7 +185,7 @@ def complete_chat(
         json={
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
         },
         verify=verify_ssl,

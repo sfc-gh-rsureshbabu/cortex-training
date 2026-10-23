@@ -99,6 +99,7 @@ openai = OpenAI(
 stream = openai.chat.completions.create(
     model="sf-ct-DEPLOYMENT_UUID",
     messages=[{"role": "user", "content": "Write a haiku about snow."}],
+    max_completion_tokens=256,
     stream=True,
 )
 for chunk in stream:
@@ -113,15 +114,21 @@ curl -N "$BASE_URL/chat/completions" \
   -H "Authorization: Bearer $PAT" \
   -H "X-Snowflake-Authorization-Token-Type: PROGRAMMATIC_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"model": "sf-ct-DEPLOYMENT_UUID", "stream": true,
+  -d '{"model": "sf-ct-DEPLOYMENT_UUID", "stream": true, "max_completion_tokens": 256,
        "messages": [{"role": "user", "content": "Write a haiku about snow."}]}'
 ```
 
 The streamed response is server-sent events: one `data: {...}` line per
 `chat.completion.chunk`, whose `choices[0].delta.content` holds the next piece
-of text, and a final `data: [DONE]`. Leave out `"stream": true` to get one
-`chat.completion` object instead. `GET $BASE_URL/models` lists the `READY`
-deployments you own in the schema.
+of text, and a final `data: [DONE]`. The first chunk's delta carries only
+`"role": "assistant"`, and the last chunk before `[DONE]` has an empty delta
+and the `finish_reason`. Add `"stream_options": {"include_usage": true}` to get
+one more chunk, with empty `choices`, that carries the token counts. Leave out
+`"stream": true` to get one `chat.completion` object instead.
+
+Limit the reply length with `max_completion_tokens`. The endpoint rejects
+`max_tokens` with HTTP 400 (`"param": "max_tokens"`,
+`"code": "unsupported_parameter"`).
 
 ## 4. Inspect
 
