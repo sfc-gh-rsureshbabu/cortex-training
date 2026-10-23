@@ -78,6 +78,51 @@ def test_iter_sse_chunks_decodes_bytes():
     assert [streaming.chunk_text(c) for c in streaming.iter_sse_chunks(lines)] == ["x"]
 
 
+@pytest.mark.parametrize(
+    ("lines", "message"),
+    [
+        (sse(delta("a"), {"error": {"message": "engine died"}}), "returned an error: engine died"),
+        (sse(delta("a"), done=False) + ['data: {"choices": [', ""], "not JSON"),
+        (sse(delta("a"), delta("b"), done=False), "ended without \\[DONE\\]"),
+    ],
+    ids=["error-chunk", "malformed-chunk", "truncated"],
+)
+def test_iter_sse_chunks_raises_on_failures_after_the_200(lines, message):
+    with pytest.raises(streaming.DeploymentCallError, match=message):
+        list(streaming.iter_sse_chunks(lines))
+
+
+def test_stream_chat_does_not_report_a_truncated_stream_as_a_reply():
+    session = FakeSession(FakeResponse(lines=sse(delta("partial"), done=False)))
+    seen = []
+    with pytest.raises(streaming.DeploymentCallError, match="without"):
+        streaming.stream_chat(
+            BASE_URL,
+            "PAT",
+            model=DEPLOYMENT_ID,
+            messages=streaming.chat_messages("Hi"),
+            max_completion_tokens=16,
+            temperature=0.0,
+            on_delta=seen.append,
+            session=session,
+        )
+    assert seen == ["partial"]
+
+
+def test_complete_chat_raises_on_an_error_body():
+    session = FakeSession(FakeResponse(body={"error": {"message": "overloaded"}}))
+    with pytest.raises(streaming.DeploymentCallError, match="overloaded"):
+        streaming.complete_chat(
+            BASE_URL,
+            "PAT",
+            model=DEPLOYMENT_ID,
+            messages=streaming.chat_messages("Hi"),
+            max_completion_tokens=16,
+            temperature=0.0,
+            session=session,
+        )
+
+
 def test_chunk_text_handles_empty_choices_and_role_only_delta():
     assert streaming.chunk_text({"choices": []}) == ""
     assert streaming.chunk_text({"choices": [{"delta": {"role": "assistant"}}]}) == ""
@@ -170,8 +215,9 @@ def test_http_errors_raise_with_status(status, message):
 class FakeClient:
     model_deployment_base_url = BASE_URL
 
-    def __init__(self, wait_error=None):
+    def __init__(self, wait_error=None, drop_error=None):
         self.wait_error = wait_error
+        self.drop_error = drop_error
         self.created = []
         self.dropped = []
 
@@ -186,6 +232,8 @@ class FakeClient:
 
     def drop_model_deployment(self, deployment_id):
         self.dropped.append(deployment_id)
+        if self.drop_error:
+            raise self.drop_error
         return {"deployment": deployment_id, "dropped": True}
 
 
@@ -229,6 +277,21 @@ def test_deploy_drops_when_wait_fails(deploy):
         deploy["main"](deploy["config"]())
     assert deploy["client"].dropped == [DEPLOYMENT_ID]
     assert deploy["calls"] == []
+
+
+def test_failed_drop_does_not_mask_the_wait_error(deploy, caplog):
+    deploy["client"] = FakeClient(
+        wait_error=TimeoutError("still INITIALIZING"), drop_error=ConnectionError("reset")
+    )
+    with pytest.raises(TimeoutError, match="still INITIALIZING"):
+        deploy["main"](deploy["config"]())
+    assert f"cortex-training model-deployment drop {DEPLOYMENT_ID}" in caplog.text
+
+
+def test_failed_drop_after_a_good_reply_is_raised(deploy):
+    deploy["client"] = FakeClient(drop_error=ConnectionError("reset"))
+    with pytest.raises(ConnectionError):
+        deploy["main"](deploy["config"]())
 
 
 def test_deploy_keep_deployment_leaves_it_running(deploy):

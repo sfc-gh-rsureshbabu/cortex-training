@@ -55,10 +55,24 @@ def chat_messages(prompt: str, system: str | None = None) -> list[dict[str, str]
     return messages
 
 
+class DeploymentCallError(RuntimeError):
+    """A chat completions call failed, before or after its HTTP 200."""
+
+
+def _raise_for_error_body(body: Any) -> None:
+    if isinstance(body, dict) and body.get("error"):
+        error = body["error"]
+        message = error.get("message") if isinstance(error, dict) else error
+        raise DeploymentCallError(f"chat completions returned an error: {message}")
+
+
 def iter_sse_chunks(lines: Iterable[str | bytes]) -> Iterator[dict[str, Any]]:
     """Yield each JSON chunk of a server-sent-event stream until ``[DONE]``.
 
-    Blank lines, comments (``:``), and non-``data`` fields are skipped.
+    Blank lines, comments (``:``), and non-``data`` fields are skipped. The
+    status is already 200 when the stream starts, so a failure after that is
+    raised here as :class:`DeploymentCallError`: an ``error`` chunk, a chunk
+    that is not JSON, or a stream that ends without ``[DONE]``.
     """
     for raw in lines:
         line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
@@ -67,8 +81,17 @@ def iter_sse_chunks(lines: Iterable[str | bytes]) -> Iterator[dict[str, Any]]:
         data = line[len(SSE_DATA_PREFIX) :].strip()
         if data == SSE_DONE:
             return
-        if data:
-            yield json.loads(data)
+        if not data:
+            continue
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise DeploymentCallError(
+                f"chat completions stream sent a chunk that is not JSON: {data[:ERROR_BODY_LIMIT]}"
+            ) from exc
+        _raise_for_error_body(chunk)
+        yield chunk
+    raise DeploymentCallError(f"chat completions stream ended without {SSE_DONE}")
 
 
 def chunk_text(chunk: dict[str, Any]) -> str:
@@ -91,10 +114,6 @@ class ChatResult:
     chunks: int = 0
     finish_reason: str | None = None
     usage: dict[str, Any] | None = None
-
-
-class DeploymentCallError(RuntimeError):
-    """A chat completions call returned an HTTP error."""
 
 
 def _raise_for_status(response: requests.Response) -> None:
@@ -193,6 +212,7 @@ def complete_chat(
     )
     _raise_for_status(response)
     body = response.json()
+    _raise_for_error_body(body)
     choice = (body.get("choices") or [{}])[0]
     text = (choice.get("message") or {}).get("content") or ""
     return ChatResult(

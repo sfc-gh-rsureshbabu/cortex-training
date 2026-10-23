@@ -155,4 +155,6 @@ no GPUs and reports `"dropped": false` with its status.
 
 - [CLI reference: Model Deployments](../../reference/cli.md#model-deployments)
 - [REST API reference section 14](../../reference/rest-api.md#14-model-deployments):
-  spec rules, statuses, drop, downloads, and errors
+  spec rules, statuses, drop, downloads, and errors, and
+  [section 14.8](../../reference/rest-api.md#148-calling-a-deployment) for the
+  chat completions request, streaming format, and errors

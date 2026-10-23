@@ -130,21 +130,38 @@ def main(config: Config) -> None:
                 completion_tokens,
                 result.finish_reason,
             )
-    finally:
+    except BaseException:
         if created and not config.keep_deployment:
-            dropped = client.drop_model_deployment(deployment_id)
-            if dropped.get("dropped"):
-                logger.info("Dropped %s", deployment_id)
-            else:
-                # FAILED or TERMINATED: it holds no GPUs and cannot be dropped.
-                logger.info("%s is %s and holds no GPUs", deployment_id, dropped.get("status"))
-        elif created:
-            logger.info(
-                "Leaving %s running; drop it with: cortex-training model-deployment drop %s",
-                deployment_id,
-                deployment_id,
-            )
+            # Never let a failed drop replace the error that got us here.
+            try:
+                _drop(client, deployment_id)
+            except Exception:
+                logger.exception(
+                    "Could not drop %s; it may still hold GPUs. Drop it with: "
+                    "cortex-training model-deployment drop %s",
+                    deployment_id,
+                    deployment_id,
+                )
+        raise
+    if not created:
+        return
+    if config.keep_deployment:
+        logger.info(
+            "Leaving %s running; drop it with: cortex-training model-deployment drop %s",
+            deployment_id,
+            deployment_id,
+        )
+    else:
+        _drop(client, deployment_id)
 
+
+def _drop(client: Any, deployment_id: str) -> None:
+    dropped = client.drop_model_deployment(deployment_id)
+    if dropped.get("dropped"):
+        logger.info("Dropped %s", deployment_id)
+    else:
+        # FAILED or TERMINATED: it holds no GPUs and cannot be dropped.
+        logger.info("%s is %s and holds no GPUs", deployment_id, dropped.get("status"))
 
 if __name__ == "__main__":
     chz.nested_entrypoint(main)
