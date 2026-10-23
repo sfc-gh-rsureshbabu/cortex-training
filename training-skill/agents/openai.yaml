@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tau2 Retail SFT Plus GRPO"
+  short_description: "Recreate the retail SFT-plus-GRPO training recipe"
+  default_prompt: "Use $training-skill to recreate the Tau2 retail SFT-plus-GRPO experiment with newly generated, quality-audited demonstrations in a separate workspace."
