@@ -1971,7 +1971,8 @@ def test_generate_reads_json_and_polls(tmp_path):
     }
     assert client.generate_routing_key == "sample-route"
     assert client.generate_strict is False
-    assert client.generate_wait_seconds == 40
+    # Waiting is opt-in, so a default generate keeps all of its retries.
+    assert client.generate_wait_seconds is None
     assert client.polled_request == ("job-1", "req-generate-1")
     assert json.loads(stdout.getvalue()) == {
         "job_id": "job-1",

@@ -240,14 +240,14 @@ _SESSION_EXPIRED_CODES = frozenset({"390111", "390112", "390114"})
 # The Cortex Training API's code, on an HTTP 400, for a database or schema in the
 # URL path that it cannot resolve. The client explains it; it never creates one.
 _DATABASE_NOT_RESOLVED_CODE = "517602"
-# Request states, as poll_request() spells them, after which a request never changes.
+# Final request states, in the short form _normalize_request_status() returns.
 _SUCCEEDED_REQUEST_STATES = frozenset({"completed", "done", "succeeded"})
 _FAILED_REQUEST_STATES = frozenset({"failed", "cancelled", "canceled"})
 _TERMINAL_REQUEST_STATES = _SUCCEEDED_REQUEST_STATES | _FAILED_REQUEST_STATES
-# The server holds a waiting generate for at most this long.
+# Longest wait the service grants a generate, whatever wait_seconds asks for.
 _MAX_GENERATE_WAIT_SECONDS = 40
-# Extra read time past the capped wait, so the server ends a waiting call
-# (with a reply) before the client's read timeout does.
+# The service answers a waiting call within 30 s after the wait ends; 45 s
+# leaves 15 s on top, so the reply arrives before the read timeout fires.
 _GENERATE_WAIT_READ_MARGIN_SECONDS = 45.0
 _CHUNK_GROUP_RESTART_REQUIRED = "chunk_group_restart_required"
 _CHUNK_GROUP_ERROR_CODES = {
@@ -888,16 +888,24 @@ def _is_connect_error(exc: BaseException) -> bool:
     return False
 
 
-def _is_waiting_generate_retryable(exc: BaseException) -> bool:
-    """Retry a waiting generate only if it certainly never started.
+# Statuses that turn a generate away before any generation starts (see
+# _TRANSIENT_STATUSES), so resending one cannot run it twice.
+_WAITING_GENERATE_RETRY_STATUSES = frozenset({429, 404, 409, 307, 308})
 
-    Once the server has the request it may already be generating, so a read
-    timeout, a reset, or a 5xx is raised rather than resent. That includes 503,
-    which a gateway can return after the backend already accepted the call.
+
+def _is_waiting_generate_retryable(exc: BaseException) -> bool:
+    """Retry a waiting generate only on failures that come before it starts.
+
+    A read timeout, a reset after send, or any 5xx is raised rather than resent:
+    the service may already be generating, and a gateway can answer 503 or 504
+    after the backend accepted the call. The job-not-found 404 stays final
+    through ``_definitive_not_found``.
     """
     if isinstance(exc, requests.exceptions.HTTPError):
         resp = exc.response
-        return resp is not None and resp.status_code == 429
+        if resp is None or resp.status_code not in _WAITING_GENERATE_RETRY_STATUSES:
+            return False
+        return _chunk_group_error_detail(resp) is None
     return _is_connect_error(exc)
 
 
@@ -5082,8 +5090,9 @@ class CortexTrainingClient:
     # frame into request chunks, while generate_stream fails fast client-side
     # with a clear message.
     _MAX_GENERATE_BYTES = 60 * 1024 * 1024  # 60 MB
-    # Bounds memory when waited generates are never polled. Once full, generate
-    # stops asking to wait rather than drop a finished result.
+    # Bounds memory when waited generates are never polled; far more than a
+    # training loop keeps in flight. Once full, generate stops asking to wait
+    # rather than drop a finished result.
     _MAX_FINISHED_GENERATE_REPLIES = 1024
 
     def _build_generate_frame(
@@ -5254,7 +5263,8 @@ class CortexTrainingClient:
             retry_on: Callable[[BaseException], bool] = (
                 _is_chunk_post_transient if allow_group_restart else _is_transient
             )
-            # Only the final POST starts the request, so only it can wait.
+            # Earlier chunks are only staged; the last POST creates the request
+            # and is the one that waits.
             final_kwargs: dict[str, Any] = {}
             if idx == len(chunks) - 1:
                 if final_params:
@@ -5385,10 +5395,10 @@ class CortexTrainingClient:
         HTTP call; otherwise polling works as usual. ``None`` or ``0`` does
         not wait.
 
-        A waiting submit is retried only on errors that prove it never reached
-        the server (connection failures, HTTP 429). Any other failure is
-        raised, because the generation may already be running and a retry
-        would run it twice.
+        A waiting submit is retried only on failures that come before any
+        generation starts: connection failures, and HTTP 429, 404, 409, 307 or
+        308. A 5xx, a read timeout, or a reset after send is raised, because
+        the generation may already be running and a retry would run it twice.
         """
         if wait_seconds is not None and (
             isinstance(wait_seconds, bool) or not isinstance(wait_seconds, int) or wait_seconds < 0
@@ -5417,7 +5427,8 @@ class CortexTrainingClient:
         self._generate_request_ids.add(request_id)
         state = self._normalize_request_status(str(response.get("status") or ""))
         if wait_kwargs and state in _TERMINAL_REQUEST_STATES:
-            # Kept raw: decoding here could raise and lose the request_id.
+            # Stored undecoded, so a bad result fails in poll_request(), after
+            # the caller already holds the request_id.
             self._finished_generate_replies[request_id] = response
         return request_id
 
@@ -6039,14 +6050,8 @@ class CortexTrainingClient:
         debug_label = self._debug_context_label(debug_context) if debug_context is not None else None
         result_chunks: list[bytes] = []
         cursor: str | None = None
-        finished = self._finished_generate_replies.pop(request_id, None)
         while time.monotonic() < deadline:
-            if finished is not None:
-                with _server_payload():
-                    status = self._decode_stream_result_events(finished)
-                finished = None
-            else:
-                status = self.get_request_status(job_id, request_id, cursor=cursor)
+            status = self.get_request_status(job_id, request_id, cursor=cursor)
             state = self._normalize_request_status(status.get("status", ""))
             events = status.get("events") or []
             received_chunk = False
@@ -6132,6 +6137,14 @@ class CortexTrainingClient:
         max_events: int | None = None,
         cursor: str | None = None,
     ) -> dict:
+        """Return the request's status. Without a ``cursor``, a terminal reply kept
+        from ``generate(wait_seconds=...)`` is returned once, with no GET, since the
+        service may already have dropped its copy."""
+        if not cursor:
+            kept = self._finished_generate_replies.pop(request_id, None)
+            if kept is not None:
+                with _server_payload():
+                    return self._decode_stream_result_events(kept)
         params = {}
         if max_events is not None:
             params["max_events"] = max_events
@@ -6145,10 +6158,7 @@ class CortexTrainingClient:
             debug_context=debug_context,
         )
         with _server_payload():
-            status = self._decode_stream_result_events(resp.json())
-        if self._normalize_request_status(str(status.get("status") or "")) in _TERMINAL_REQUEST_STATES:
-            self._finished_generate_replies.pop(request_id, None)
-        return status
+            return self._decode_stream_result_events(resp.json())
 
     @_track_operation("cancel_request")
     def cancel_request(

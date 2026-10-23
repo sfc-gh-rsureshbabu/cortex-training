@@ -3808,10 +3808,14 @@ class TestDataPlane:
         "failure",
         [
             _make_error_response({"message": "busy"}, status_code=429),
+            _make_error_response({"message": "not visible yet"}, status_code=404),
+            _make_error_response({"message": "restarting"}, status_code=409),
+            _make_error_response({}, status_code=307),
+            _make_error_response({}, status_code=308),
             nc.requests.exceptions.ConnectionError(nc.NewConnectionError(None, "refused")),
             nc.requests.exceptions.ConnectTimeout("connect timed out"),
         ],
-        ids=["429", "refused", "connect-timeout"],
+        ids=["429", "404", "409", "307", "308", "refused", "connect-timeout"],
     )
     def test_generate_wait_is_retried_when_it_never_started(self, monkeypatch, failure):
         from tenacity import wait_none
@@ -3823,13 +3827,47 @@ class TestDataPlane:
         assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g2"
         assert c._session.post.call_count == 2
 
+    def test_generate_wait_job_not_found_is_final(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._session.post.side_effect = [
+            _not_found("517601", "Training job j1 not found", url=f"{c._prefix}/j1/generate"),
+            _make_response({"request_id": "g2"}),
+        ]
+        with pytest.raises(nc.requests.exceptions.HTTPError):
+            c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c._session.post.call_count == 1
+
+    def test_generate_wait_chunk_group_conflict_is_not_retried(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        conflict = _make_error_response(
+            {"detail": {"code": "chunk_group_missing_chunks", "message": "missing chunks",
+                        "chunk_group_id": "group-a", "missing_chunks": [0]}}
+        )
+        c._session.post.side_effect = [conflict, _make_response({"request_id": "g2"})]
+        with pytest.raises(nc.ChunkGroupConflictError):
+            c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c._session.post.call_count == 1
+
     @pytest.mark.parametrize(
         "failure",
         [
             nc.requests.exceptions.ReadTimeout("no reply"),
+            nc.requests.exceptions.ConnectionError("connection reset by peer"),
+            _make_error_response({"message": "internal"}, status_code=500),
+            _make_error_response({"message": "bad gateway"}, status_code=502),
             _make_error_response({"message": "unavailable"}, status_code=503),
+            _make_error_response({"message": "gateway timeout"}, status_code=504),
+            _make_error_response({"message": "restarting"}, status_code=409),
         ],
-        ids=["read-timeout", "503"],
+        ids=["read-timeout", "reset", "500", "502", "503", "504", "409"],
     )
     def test_generate_without_wait_keeps_its_retries(self, monkeypatch, failure):
         from tenacity import wait_none
@@ -3920,11 +3958,15 @@ class TestDataPlane:
         assert c._finished_generate_replies == {}
 
     def test_generate_wait_undecodable_reply_still_returns_the_request_id(self):
-        reply = self._done_reply()
-        reply["result"]["payload_b64"] = ""
+        reply = {
+            "request_id": "g1",
+            "job_id": "j1",
+            "status": "REQUEST_STATE_DONE",
+            "events": [{"type": "result_chunk", "payload_b64": "aGk=", "payload_sha256": "0" * 64}],
+        }
         c = _make_client(post_json=reply)
         assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g1"
-        with pytest.raises(RuntimeError, match="payload_b64"):
+        with pytest.raises(RuntimeError, match="payload_sha256 mismatch"):
             c.poll_request("j1", "g1")
         c._session.get.assert_not_called()
 
@@ -3962,14 +4004,23 @@ class TestDataPlane:
         assert c._session.get.call_count == 1
         assert c._session.get.call_args.kwargs["params"] == {"cursor": "1"}
 
-    def test_get_request_status_frees_a_kept_reply_once_terminal(self):
-        c = _make_client(post_json=self._done_reply(), get_json={"status": "REQUEST_STATE_RUNNING"})
+    def test_get_request_status_returns_a_kept_reply_once(self):
+        c = _make_client(post_json=self._done_reply(), get_json={"status": "REQUEST_STATE_DONE"})
         c.generate("j1", prompts=["hello"], wait_seconds=40)
-        c.get_request_status("j1", "g1")
-        assert "g1" in c._finished_generate_replies
-        c._session.get.return_value = _make_response({"status": "REQUEST_STATE_DONE"})
-        c.get_request_status("j1", "g1")
+        status = c.get_request_status("j1", "g1")
+        assert status["status"] == "REQUEST_STATE_DONE"
+        assert status["result"]["wire_format"] == "DSSST1"
+        c._session.get.assert_not_called()
         assert c._finished_generate_replies == {}
+        c.get_request_status("j1", "g1")
+        assert c._session.get.call_count == 1
+
+    def test_get_request_status_with_a_cursor_skips_the_kept_reply(self):
+        c = _make_client(post_json=self._done_reply(), get_json={"status": "REQUEST_STATE_DONE"})
+        c.generate("j1", prompts=["hello"], wait_seconds=40)
+        c.get_request_status("j1", "g1", cursor="1")
+        assert c._session.get.call_args.kwargs["params"] == {"cursor": "1"}
+        assert "g1" in c._finished_generate_replies
 
     def test_cancel_request_frees_a_kept_reply(self):
         c = _make_client(post_json=self._done_reply())

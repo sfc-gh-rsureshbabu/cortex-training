@@ -290,12 +290,14 @@ The default is ten retries after the first attempt, with exponential jitter.
 Create-job uses the narrower connection-establishment retry predicate so an
 ambiguous response does not accidentally create a second server-assigned job.
 
-A generate sent with `wait_seconds` above `0` is retried only when it never
-reached the server: a connection failure, or HTTP 429. A read timeout, a reset
-after the request was sent, or any 5xx is raised instead, because the server
-may already be generating and a resend would run the generation twice. That
-includes 503: a gateway can return it after the backend already accepted the
-call. See
+A generate sent with `wait_seconds` above `0` is retried only on failures that
+come before any generation starts: a connection failure, or HTTP 429, 404, 409,
+307 or 308. The 404 and 409 exceptions above still apply: a job-not-found 404
+and a chunk-group 409 are not retried. A 5xx, a read timeout, or a reset after
+the request was sent is raised instead, because the server may already be
+generating and a resend would run the generation twice. That includes 503 and
+504: a gateway can return them after the backend already accepted the call. A
+generate without `wait_seconds` keeps the retries above. See
 [Waiting for the result](#waiting-for-the-result-wait_seconds).
 
 ### 3.6 Errors
@@ -1226,9 +1228,11 @@ POST /{job_id}/generate?wait_seconds=40
 - When the call waited, the reply is the body that
   `GET /{job_id}/requests/{request_id}` returns
   ([section 6.8](#68-poll-request---get-job_idrequestsrequest_id)), plus
-  `job_id`. The generation has finished only if `status` is terminal (done,
-  failed or cancelled). If the wait ran out first, `status` is pending or
-  running, there is no result yet, and the caller polls `request_id` as usual.
+  `job_id`. As on a poll, `status` is the raw enum name. The generation has
+  finished only if it is terminal: `REQUEST_STATE_DONE`,
+  `REQUEST_STATE_FAILED` or `REQUEST_STATE_CANCELLED`. If the wait ran out
+  first, it is `REQUEST_STATE_PENDING` or `REQUEST_STATE_RUNNING`, there is no
+  result yet, and the caller polls `request_id` as usual.
 - A chunked result arrives as it does on a poll: the reply carries the first
   `result_chunk` events and a `next_cursor`, and the rest are read with
   `GET /{job_id}/requests/{request_id}?cursor=...`.
@@ -1243,13 +1247,15 @@ result = client.poll_request(job_id, request_id)
 `generate()` still returns only the `request_id`. If the reply is terminal, the
 client keeps it, and the next `poll_request()` for that id returns the result
 (or raises for a failed request) without another HTTP call. Any other reply is
-polled as before. A kept reply is dropped once `get_request_status()` sees a
-terminal status for it, or on `cancel_request()`. While 1,024 kept replies are
-waiting to be polled, further generates are sent without a wait.
+polled as before. The next `get_request_status()` without a `cursor` also
+returns the kept reply once, without an HTTP call; the server may already have
+dropped its copy, so a later GET is not guaranteed to show the result again.
+`cancel_request()` drops a kept reply. While 1,024 kept replies are waiting to
+be read, further generates are sent without a wait.
 
 For a waiting call, the read timeout is raised to at least the capped wait plus
 45 seconds, so the server ends the call before the client gives up on it. The
-call is retried only when it never reached the server; see
+call is retried only on failures that come before the generation starts; see
 [section 3.5](#35-retries).
 
 #### Per-token log probabilities
