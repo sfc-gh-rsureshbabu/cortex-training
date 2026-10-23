@@ -3786,11 +3786,12 @@ class TestDataPlane:
         [
             _make_error_response({"message": "internal"}, status_code=500),
             _make_error_response({"message": "bad gateway"}, status_code=502),
+            _make_error_response({"message": "unavailable"}, status_code=503),
             _make_error_response({"message": "gateway timeout"}, status_code=504),
             nc.requests.exceptions.ReadTimeout("no reply"),
             nc.requests.exceptions.ConnectionError("connection reset by peer"),
         ],
-        ids=["500", "502", "504", "read-timeout", "reset"],
+        ids=["500", "502", "503", "504", "read-timeout", "reset"],
     )
     def test_generate_wait_is_not_retried_once_it_may_have_started(self, monkeypatch, failure):
         from tenacity import wait_none
@@ -3807,11 +3808,10 @@ class TestDataPlane:
         "failure",
         [
             _make_error_response({"message": "busy"}, status_code=429),
-            _make_error_response({"message": "unavailable"}, status_code=503),
             nc.requests.exceptions.ConnectionError(nc.NewConnectionError(None, "refused")),
             nc.requests.exceptions.ConnectTimeout("connect timed out"),
         ],
-        ids=["429", "503", "refused", "connect-timeout"],
+        ids=["429", "refused", "connect-timeout"],
     )
     def test_generate_wait_is_retried_when_it_never_started(self, monkeypatch, failure):
         from tenacity import wait_none
@@ -3823,16 +3823,21 @@ class TestDataPlane:
         assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g2"
         assert c._session.post.call_count == 2
 
-    def test_generate_without_wait_keeps_retrying_a_read_timeout(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            nc.requests.exceptions.ReadTimeout("no reply"),
+            _make_error_response({"message": "unavailable"}, status_code=503),
+        ],
+        ids=["read-timeout", "503"],
+    )
+    def test_generate_without_wait_keeps_its_retries(self, monkeypatch, failure):
         from tenacity import wait_none
 
         monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
         c = _make_client()
         c.max_retries = 3
-        c._session.post.side_effect = [
-            nc.requests.exceptions.ReadTimeout("no reply"),
-            _make_response({"request_id": "g2"}),
-        ]
+        c._session.post.side_effect = [failure, _make_response({"request_id": "g2"})]
         assert c.generate("j1", prompts=["hello"]) == "g2"
         assert c._session.post.call_count == 2
 

@@ -291,10 +291,11 @@ Create-job uses the narrower connection-establishment retry predicate so an
 ambiguous response does not accidentally create a second server-assigned job.
 
 A generate sent with `wait_seconds` above `0` is retried only when it never
-reached the server: a connection failure, or HTTP 429 or 503. A read timeout, a
-reset after the request was sent, or a 500, 502 or 504 is raised instead,
-because the server may already be generating and a resend would run the
-generation twice. See
+reached the server: a connection failure, or HTTP 429. A read timeout, a reset
+after the request was sent, or any 5xx is raised instead, because the server
+may already be generating and a resend would run the generation twice. That
+includes 503: a gateway can return it after the backend already accepted the
+call. See
 [Waiting for the result](#waiting-for-the-result-wait_seconds).
 
 ### 3.6 Errors

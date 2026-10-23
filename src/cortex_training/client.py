@@ -892,11 +892,12 @@ def _is_waiting_generate_retryable(exc: BaseException) -> bool:
     """Retry a waiting generate only if it certainly never started.
 
     Once the server has the request it may already be generating, so a read
-    timeout, a reset, or a 500/502/504 is raised rather than resent.
+    timeout, a reset, or a 5xx is raised rather than resent. That includes 503,
+    which a gateway can return after the backend already accepted the call.
     """
     if isinstance(exc, requests.exceptions.HTTPError):
         resp = exc.response
-        return resp is not None and resp.status_code in (429, 503)
+        return resp is not None and resp.status_code == 429
     return _is_connect_error(exc)
 
 
@@ -5385,7 +5386,7 @@ class CortexTrainingClient:
         not wait.
 
         A waiting submit is retried only on errors that prove it never reached
-        the server (connection failures, HTTP 429 or 503). Any other failure is
+        the server (connection failures, HTTP 429). Any other failure is
         raised, because the generation may already be running and a retry
         would run it twice.
         """
