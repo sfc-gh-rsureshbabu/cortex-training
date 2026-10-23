@@ -55,6 +55,7 @@ class FakeClient:
         self.generate_sampling_params = None
         self.generate_routing_key = None
         self.generate_strict = None
+        self.generate_wait_seconds = None
         self.weight_sync_job_id = None
         self.weight_sync_source_sub_job_id = None
         self.weight_sync_target_sub_job_ids = None
@@ -173,12 +174,14 @@ class FakeClient:
         sampling_params=None,
         routing_key=None,
         strict=None,
+        wait_seconds=None,
     ):
         self.generated_job_id = job_id
         self.generate_prompts = prompts
         self.generate_sampling_params = sampling_params
         self.generate_routing_key = routing_key
         self.generate_strict = strict
+        self.generate_wait_seconds = wait_seconds
         return "req-generate-1"
 
     def weight_sync(
@@ -1968,6 +1971,7 @@ def test_generate_reads_json_and_polls(tmp_path):
     }
     assert client.generate_routing_key == "sample-route"
     assert client.generate_strict is False
+    assert client.generate_wait_seconds == 40
     assert client.polled_request == ("job-1", "req-generate-1")
     assert json.loads(stdout.getvalue()) == {
         "job_id": "job-1",
@@ -2031,11 +2035,53 @@ def test_generate_can_skip_poll(tmp_path):
 
     assert rc == 0
     assert instances[0].polled_request is None
+    assert instances[0].generate_wait_seconds is None
     assert json.loads(stdout.getvalue()) == {
         "job_id": "job-1",
         "prompt_count": 1,
         "request_id": "req-generate-1",
     }
+
+
+@pytest.mark.parametrize("wait_seconds", [0, 5])
+def test_generate_wait_seconds_replaces_the_default(tmp_path, wait_seconds):
+    instances = []
+    path = tmp_path / "generate.json"
+    path.write_text(
+        json.dumps({"wait_seconds": wait_seconds, "payload": {"prompts": ["hello"]}}),
+        encoding="utf-8",
+    )
+
+    rc = cli.main(
+        _base_args() + ["--job-id", "job-1", "generate", str(path)],
+        client_factory=_factory(instances),
+        stdout=io.StringIO(),
+    )
+
+    assert rc == 0
+    assert instances[0].generate_wait_seconds == wait_seconds
+    assert instances[0].polled_request == ("job-1", "req-generate-1")
+
+
+def test_generate_rejects_wait_seconds_without_poll(tmp_path):
+    instances = []
+    path = tmp_path / "generate.json"
+    path.write_text(
+        json.dumps({"poll": False, "wait_seconds": 5, "payload": {"prompts": ["hello"]}}),
+        encoding="utf-8",
+    )
+    stderr = io.StringIO()
+
+    rc = cli.main(
+        _base_args() + ["--job-id", "job-1", "generate", str(path)],
+        client_factory=_factory(instances),
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+
+    assert rc != 0
+    assert "wait_seconds" in stderr.getvalue()
+    assert not instances or instances[0].generated_job_id is None
 
 
 def test_generate_counts_flat_token_list_as_one_prompt(tmp_path):

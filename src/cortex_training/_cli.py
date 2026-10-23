@@ -1197,6 +1197,11 @@ def _cmd_load(args: argparse.Namespace, client, stdout: TextIO) -> int:
     return 0
 
 
+# Asked of the server so a short generation comes back on the submit call. The
+# server caps it and may not support waiting.
+_GENERATE_WAIT_SECONDS = 40
+
+
 def _cmd_generate(
     args: argparse.Namespace,
     client,
@@ -1212,6 +1217,9 @@ def _cmd_generate(
         raise ValueError("generate payload must be an object")
 
     poll = _json_bool(spec.get("poll", True), "generate poll")
+    if not poll and "wait_seconds" in spec:
+        raise ValueError('generate "wait_seconds" needs polling; drop it or "poll": false')
+    wait_seconds = spec.get("wait_seconds", _GENERATE_WAIT_SECONDS) if poll else None
     prompts = payload.get("prompts")
     if not isinstance(prompts, list) or not prompts:
         raise ValueError("generate JSON must contain a non-empty prompts list")
@@ -1242,6 +1250,7 @@ def _cmd_generate(
         sampling_params=sampling_params,
         routing_key=payload.get("routing_key"),
         strict=strict,
+        wait_seconds=wait_seconds,
     )
     response = {
         "job_id": args.job,

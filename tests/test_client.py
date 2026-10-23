@@ -3747,6 +3747,247 @@ class TestDataPlane:
 
         assert wire.read_byte_chunk_metadata(first)["operation"] == "generate"
 
+    @pytest.mark.parametrize("wait_seconds", [None, 0])
+    def test_generate_without_wait_sends_no_wait_param(self, wait_seconds):
+        c = _make_client(post_json={"request_id": "g1"})
+        c.generate("j1", prompts=["hello"], wait_seconds=wait_seconds)
+        kwargs = c._session.post.call_args.kwargs
+        assert "params" not in kwargs
+        assert "timeout" not in kwargs
+
+    @pytest.mark.parametrize("wait_seconds", [40, 3600])
+    def test_generate_wait_read_timeout_outlasts_the_capped_wait(self, wait_seconds):
+        c = CortexTrainingClient(
+            base_url="http://test.local", database="DB", schema="SCH",
+            request_timeout=(5.0, 10.0),
+        )
+        c._session = MagicMock()
+        c._session.post.return_value = _make_response({"request_id": "g1"})
+        c.generate("j1", prompts=["hello"], wait_seconds=wait_seconds)
+        kwargs = c._session.post.call_args.kwargs
+        # Sent as given; the server applies its own 40 s cap.
+        assert kwargs["params"] == {"wait_seconds": wait_seconds}
+        assert kwargs["timeout"] == (5.0, 85.0)
+
+    def test_generate_wait_keeps_a_longer_configured_read_timeout(self):
+        c = _make_client(post_json={"request_id": "g1"})
+        c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c._session.post.call_args.kwargs["timeout"] == (30.0, 600.0)
+
+    @pytest.mark.parametrize("wait_seconds", [-1, 1.5, True, "40"])
+    def test_generate_rejects_a_bad_wait(self, wait_seconds):
+        c = _make_client(post_json={"request_id": "g1"})
+        with pytest.raises(ValueError, match="wait_seconds"):
+            c.generate("j1", prompts=["hello"], wait_seconds=wait_seconds)
+        c._session.post.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            _make_error_response({"message": "internal"}, status_code=500),
+            _make_error_response({"message": "bad gateway"}, status_code=502),
+            _make_error_response({"message": "gateway timeout"}, status_code=504),
+            nc.requests.exceptions.ReadTimeout("no reply"),
+            nc.requests.exceptions.ConnectionError("connection reset by peer"),
+        ],
+        ids=["500", "502", "504", "read-timeout", "reset"],
+    )
+    def test_generate_wait_is_not_retried_once_it_may_have_started(self, monkeypatch, failure):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._session.post.side_effect = [failure, _make_response({"request_id": "g2"})]
+        with pytest.raises(nc.requests.exceptions.RequestException):
+            c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c._session.post.call_count == 1
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            _make_error_response({"message": "busy"}, status_code=429),
+            _make_error_response({"message": "unavailable"}, status_code=503),
+            nc.requests.exceptions.ConnectionError(nc.NewConnectionError(None, "refused")),
+            nc.requests.exceptions.ConnectTimeout("connect timed out"),
+        ],
+        ids=["429", "503", "refused", "connect-timeout"],
+    )
+    def test_generate_wait_is_retried_when_it_never_started(self, monkeypatch, failure):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._session.post.side_effect = [failure, _make_response({"request_id": "g2"})]
+        assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g2"
+        assert c._session.post.call_count == 2
+
+    def test_generate_without_wait_keeps_retrying_a_read_timeout(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._session.post.side_effect = [
+            nc.requests.exceptions.ReadTimeout("no reply"),
+            _make_response({"request_id": "g2"}),
+        ]
+        assert c.generate("j1", prompts=["hello"]) == "g2"
+        assert c._session.post.call_count == 2
+
+    def test_generate_wait_is_sent_only_on_the_final_chunk(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._MAX_GENERATE_BYTES = 64 * 1024
+        c._session.post.side_effect = [
+            # An earlier chunk starts nothing, so it keeps the normal retry.
+            _make_error_response({"message": "gateway timeout"}, status_code=504),
+            _make_response({"chunk_cached": True}),
+            _make_response({"request_id": "g4"}),
+        ]
+        assert c.generate("j1", prompts=["x" * (70 * 1024)], wait_seconds=40) == "g4"
+        assert c._session.post.call_count == 3
+        first, _, last = c._session.post.call_args_list
+        assert "params" not in first.kwargs
+        assert last.kwargs["params"] == {"wait_seconds": 40}
+
+    def test_generate_wait_plain_handle_reply_polls(self, monkeypatch):
+        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+        c = _make_client(
+            post_json={"request_id": "g1", "job_id": "j1"},
+            get_json={"status": "done", "result": {"text": "hi"}},
+        )
+        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c._finished_generate_replies == {}
+        assert c.poll_request("j1", rid) == {"text": "hi"}
+        assert c._session.get.call_count == 1
+
+    @pytest.mark.parametrize("status", ["REQUEST_STATE_PENDING", "running"])
+    def test_generate_wait_unfinished_reply_polls(self, monkeypatch, status):
+        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+        c = _make_client(
+            post_json={"request_id": "g1", "job_id": "j1", "status": status},
+            get_json={"status": "done", "result": {"text": "hi"}},
+        )
+        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c._finished_generate_replies == {}
+        assert c.poll_request("j1", rid) == {"text": "hi"}
+        assert c._session.get.call_count == 1
+
+    @staticmethod
+    def _done_reply(request_id="g1"):
+        from cortex_training import wire
+
+        payload = wire.dumps(
+            {
+                "job_id": "j1",
+                "results": [{"text": "hi", "token_ids": torch.tensor([1, 2, 3], dtype=torch.int64)}],
+            }
+        )
+        return {
+            "request_id": request_id,
+            "job_id": "j1",
+            "status": "REQUEST_STATE_DONE",
+            "result": {
+                "content_type": "application/octet-stream",
+                "encoding": "base64",
+                "wire_format": "DSSST1",
+                "payload_b64": base64.b64encode(payload).decode("ascii"),
+            },
+        }
+
+    def test_generate_wait_finished_reply_needs_no_poll(self):
+        c = _make_client(post_json=self._done_reply())
+        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        result = c.poll_request("j1", rid)
+        assert result["results"][0]["text"] == "hi"
+        assert result["results"][0]["token_ids"] == [1, 2, 3]
+        c._session.get.assert_not_called()
+        assert c._finished_generate_replies == {}
+
+    def test_generate_without_wait_keeps_no_reply(self):
+        c = _make_client(post_json=self._done_reply())
+        c.generate("j1", prompts=["hello"])
+        assert c._finished_generate_replies == {}
+
+    def test_generate_wait_undecodable_reply_still_returns_the_request_id(self):
+        reply = self._done_reply()
+        reply["result"]["payload_b64"] = ""
+        c = _make_client(post_json=reply)
+        assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g1"
+        with pytest.raises(RuntimeError, match="payload_b64"):
+            c.poll_request("j1", "g1")
+        c._session.get.assert_not_called()
+
+    def test_generate_wait_failed_reply_raises_without_poll(self):
+        c = _make_client(
+            post_json={"request_id": "g1", "job_id": "j1", "status": "REQUEST_STATE_FAILED", "error": "oom"},
+        )
+        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        with pytest.raises(RuntimeError, match="oom"):
+            c.poll_request("j1", rid)
+        c._session.get.assert_not_called()
+
+    def test_generate_wait_chunked_reply_reads_the_rest_by_cursor(self, monkeypatch):
+        from cortex_training import wire
+
+        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+        chunks = wire.encode_result_chunks({"text": "x" * 20_000}, max_bytes=12_000)
+        assert len(chunks) > 1
+        events = [
+            {"type": "result_chunk", "payload_b64": base64.b64encode(chunk).decode("ascii")}
+            for chunk in chunks
+        ]
+        c = _make_client(
+            post_json={
+                "request_id": "g1",
+                "job_id": "j1",
+                "status": "REQUEST_STATE_DONE",
+                "events": [events[0]],
+                "next_cursor": "1",
+            },
+            get_json={"status": "REQUEST_STATE_DONE", "events": events[1:]},
+        )
+        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert c.poll_request("j1", rid) == {"text": "x" * 20_000}
+        assert c._session.get.call_count == 1
+        assert c._session.get.call_args.kwargs["params"] == {"cursor": "1"}
+
+    def test_get_request_status_frees_a_kept_reply_once_terminal(self):
+        c = _make_client(post_json=self._done_reply(), get_json={"status": "REQUEST_STATE_RUNNING"})
+        c.generate("j1", prompts=["hello"], wait_seconds=40)
+        c.get_request_status("j1", "g1")
+        assert "g1" in c._finished_generate_replies
+        c._session.get.return_value = _make_response({"status": "REQUEST_STATE_DONE"})
+        c.get_request_status("j1", "g1")
+        assert c._finished_generate_replies == {}
+
+    def test_cancel_request_frees_a_kept_reply(self):
+        c = _make_client(post_json=self._done_reply())
+        c.generate("j1", prompts=["hello"], wait_seconds=40)
+        c.cancel_request("j1", "g1")
+        assert c._finished_generate_replies == {}
+
+    def test_generate_stops_waiting_while_kept_replies_are_full(self):
+        c = _make_client()
+        c._MAX_FINISHED_GENERATE_REPLIES = 2
+        c._session.post.side_effect = [_make_response(self._done_reply(rid)) for rid in ("g1", "g2")] + [
+            _make_response({"request_id": "g3", "job_id": "j1"})
+        ]
+        for _ in range(3):
+            c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert list(c._finished_generate_replies) == ["g1", "g2"]
+        last = c._session.post.call_args.kwargs
+        assert "params" not in last
+        assert "timeout" not in last
+
+    def test_max_finished_generate_replies_default(self):
+        assert CortexTrainingClient._MAX_FINISHED_GENERATE_REPLIES == 1024
+
     def test_generate_stream_rejects_oversized_payload(self):
         c = _make_client(post_json={"request_id": "s2", "count": 1})
         oversized_prompt = "x" * (CortexTrainingClient._MAX_GENERATE_BYTES + 1)

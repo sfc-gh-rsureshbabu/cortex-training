@@ -564,7 +564,11 @@ all prompts or a list of objects/nulls aligned with `prompts`. A flat list of
 integers such as `"prompts": [1, 2, 3]` is one pre-tokenized prompt, not three;
 use the nested form `[[1, 2], [3, 4]]` for a batch. The CLI submits `generate`
 and polls the request by default. Set `"poll": false` to print only the
-submitted `request_id`.
+submitted `request_id`. When it polls, the submit asks the server to wait up to
+40 seconds for the result, so a short generation needs no poll. Set a top-level
+`"wait_seconds"` to change the wait, or `0` to turn it off. If the server does
+not wait, the CLI polls as before. `"wait_seconds"` cannot be combined with
+`"poll": false`.
 
 ### Sync Training Weights
 

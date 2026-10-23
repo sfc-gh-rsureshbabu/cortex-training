@@ -240,6 +240,15 @@ _SESSION_EXPIRED_CODES = frozenset({"390111", "390112", "390114"})
 # The Cortex Training API's code, on an HTTP 400, for a database or schema in the
 # URL path that it cannot resolve. The client explains it; it never creates one.
 _DATABASE_NOT_RESOLVED_CODE = "517602"
+# Request states, as poll_request() spells them, after which a request never changes.
+_SUCCEEDED_REQUEST_STATES = frozenset({"completed", "done", "succeeded"})
+_FAILED_REQUEST_STATES = frozenset({"failed", "cancelled", "canceled"})
+_TERMINAL_REQUEST_STATES = _SUCCEEDED_REQUEST_STATES | _FAILED_REQUEST_STATES
+# The server holds a waiting generate for at most this long.
+_MAX_GENERATE_WAIT_SECONDS = 40
+# Extra read time past the capped wait, so the server ends a waiting call
+# (with a reply) before the client's read timeout does.
+_GENERATE_WAIT_READ_MARGIN_SECONDS = 45.0
 _CHUNK_GROUP_RESTART_REQUIRED = "chunk_group_restart_required"
 _CHUNK_GROUP_ERROR_CODES = {
     _CHUNK_GROUP_RESTART_REQUIRED,
@@ -877,6 +886,18 @@ def _is_connect_error(exc: BaseException) -> bool:
         reason = getattr(cause, "reason", None)
         return isinstance(cause, NewConnectionError) or isinstance(reason, NewConnectionError)
     return False
+
+
+def _is_waiting_generate_retryable(exc: BaseException) -> bool:
+    """Retry a waiting generate only if it certainly never started.
+
+    Once the server has the request it may already be generating, so a read
+    timeout, a reset, or a 500/502/504 is raised rather than resent.
+    """
+    if isinstance(exc, requests.exceptions.HTTPError):
+        resp = exc.response
+        return resp is not None and resp.status_code in (429, 503)
+    return _is_connect_error(exc)
 
 
 # ─── Canonical types ─────────────────────────────────────────────────────
@@ -1953,6 +1974,9 @@ class CortexTrainingClient:
         self._fwd_bwd_send_count = 0
         self._fwd_bwd_request_debug: dict[str, dict[str, Any]] = {}
         self._generate_request_ids: set[str] = set()
+        # Terminal replies from generate(wait_seconds=...), kept undecoded by
+        # request id until poll_request() reads them.
+        self._finished_generate_replies: dict[str, dict] = {}
         # Forward request ids awaiting poll, so a result that is only
         # ``{"job_id", "payload_b64"}`` (no ``wire_format``) can still be decoded.
         self._forward_request_ids: set[str] = set()
@@ -5057,6 +5081,9 @@ class CortexTrainingClient:
     # frame into request chunks, while generate_stream fails fast client-side
     # with a clear message.
     _MAX_GENERATE_BYTES = 60 * 1024 * 1024  # 60 MB
+    # Bounds memory when waited generates are never polled. Once full, generate
+    # stops asking to wait rather than drop a finished result.
+    _MAX_FINISHED_GENERATE_REPLIES = 1024
 
     def _build_generate_frame(
         self,
@@ -5201,6 +5228,9 @@ class CortexTrainingClient:
         force_chunk: bool = False,
         allow_group_restart: bool = False,
         debug_context: dict[str, Any] | None = None,
+        final_params: dict[str, Any] | None = None,
+        final_read_timeout: float | None = None,
+        final_retry_on: Callable[[BaseException], bool] | None = None,
     ) -> dict:
         chunks = wire.encode_byte_chunks(
             frame,
@@ -5220,14 +5250,27 @@ class CortexTrainingClient:
         final_body: dict | None = None
         while idx < len(chunks):
             chunk = chunks[idx]
+            retry_on: Callable[[BaseException], bool] = (
+                _is_chunk_post_transient if allow_group_restart else _is_transient
+            )
+            # Only the final POST starts the request, so only it can wait.
+            final_kwargs: dict[str, Any] = {}
+            if idx == len(chunks) - 1:
+                if final_params:
+                    final_kwargs["params"] = final_params
+                if final_read_timeout is not None:
+                    final_kwargs["timeout"] = (self.request_timeout[0], final_read_timeout)
+                if final_retry_on is not None:
+                    retry_on = final_retry_on
             try:
                 resp = self._send(
                     "POST",
                     f"{self._prefix}/{job_id}/{path_suffix}",
                     data=chunk,
                     headers={"Content-Type": "application/octet-stream"},
-                    retry_on=(_is_chunk_post_transient if allow_group_restart else _is_transient),
+                    retry_on=retry_on,
                     debug_context=debug_context,
+                    **final_kwargs,
                 )
             except requests.exceptions.HTTPError as exc:
                 detail = _chunk_group_error_detail(exc.response)
@@ -5313,6 +5356,7 @@ class CortexTrainingClient:
         sampling_params: dict | list[dict | None] | None = None,
         routing_key: str | list[str | None] | None = None,
         strict: bool | None = None,
+        wait_seconds: int | None = None,
     ) -> str:
         """Submit a generate request to a sampling sub-job. Returns request_id.
 
@@ -5332,17 +5376,48 @@ class CortexTrainingClient:
           would require replicating the server tokenizer (including special
           tokens), so an over-long string instead fails server-side in vLLM
           with a ``maximum model length`` error rather than client-side.
+
+        ``wait_seconds`` asks the server to hold the call for up to that many
+        whole seconds and reply with the result if the generation ends in
+        time. The server caps the wait and may not support it. When the reply
+        is final, the next :meth:`poll_request` returns it without another
+        HTTP call; otherwise polling works as usual. ``None`` or ``0`` does
+        not wait.
+
+        A waiting submit is retried only on errors that prove it never reached
+        the server (connection failures, HTTP 429 or 503). Any other failure is
+        raised, because the generation may already be running and a retry
+        would run it twice.
         """
+        if wait_seconds is not None and (
+            isinstance(wait_seconds, bool) or not isinstance(wait_seconds, int) or wait_seconds < 0
+        ):
+            raise ValueError(f"wait_seconds must be a non-negative integer; got {wait_seconds!r}")
         body = self._build_generate_frame("generate", job_id, prompts, sampling_params, routing_key, strict)
+        wait_kwargs: dict[str, Any] = {}
+        if wait_seconds and len(self._finished_generate_replies) < self._MAX_FINISHED_GENERATE_REPLIES:
+            wait_kwargs = {
+                "final_params": {"wait_seconds": wait_seconds},
+                "final_read_timeout": max(
+                    self.request_timeout[1],
+                    min(wait_seconds, _MAX_GENERATE_WAIT_SECONDS) + _GENERATE_WAIT_READ_MARGIN_SECONDS,
+                ),
+                "final_retry_on": _is_waiting_generate_retryable,
+            }
         response = self._post_octet_request_chunks(
             job_id=job_id,
             path_suffix="generate",
             operation="generate",
             frame=body,
             max_bytes=self._MAX_GENERATE_BYTES,
+            **wait_kwargs,
         )
         request_id = response["request_id"]
         self._generate_request_ids.add(request_id)
+        state = self._normalize_request_status(str(response.get("status") or ""))
+        if wait_kwargs and state in _TERMINAL_REQUEST_STATES:
+            # Kept raw: decoding here could raise and lose the request_id.
+            self._finished_generate_replies[request_id] = response
         return request_id
 
     @_track_operation("generate_stream")
@@ -5963,8 +6038,14 @@ class CortexTrainingClient:
         debug_label = self._debug_context_label(debug_context) if debug_context is not None else None
         result_chunks: list[bytes] = []
         cursor: str | None = None
+        finished = self._finished_generate_replies.pop(request_id, None)
         while time.monotonic() < deadline:
-            status = self.get_request_status(job_id, request_id, cursor=cursor)
+            if finished is not None:
+                with _server_payload():
+                    status = self._decode_stream_result_events(finished)
+                finished = None
+            else:
+                status = self.get_request_status(job_id, request_id, cursor=cursor)
             state = self._normalize_request_status(status.get("status", ""))
             events = status.get("events") or []
             received_chunk = False
@@ -5979,7 +6060,7 @@ class CortexTrainingClient:
                 cursor = next_cursor
                 # Drain available result chunks without backing off.
                 continue
-            if state in ("completed", "done", "succeeded"):
+            if state in _SUCCEEDED_REQUEST_STATES:
                 # ``payload`` is the result as the sub-job returned it, for the local
                 # training-metrics log; ``result`` also has the envelope's transport metrics.
                 envelope = status.get("result") or {}
@@ -6009,7 +6090,7 @@ class CortexTrainingClient:
                     )
                     self._fwd_bwd_request_debug.pop(request_id, None)
                 return result
-            if state in ("failed", "cancelled", "canceled"):
+            if state in _FAILED_REQUEST_STATES:
                 error = status.get("error", "")
                 if debug_label is not None:
                     logger.debug(
@@ -6063,7 +6144,10 @@ class CortexTrainingClient:
             debug_context=debug_context,
         )
         with _server_payload():
-            return self._decode_stream_result_events(resp.json())
+            status = self._decode_stream_result_events(resp.json())
+        if self._normalize_request_status(str(status.get("status") or "")) in _TERMINAL_REQUEST_STATES:
+            self._finished_generate_replies.pop(request_id, None)
+        return status
 
     @_track_operation("cancel_request")
     def cancel_request(
@@ -6074,6 +6158,7 @@ class CortexTrainingClient:
         sub_job_id: str | None = None,
         sub_job_type: str | None = None,
     ) -> dict:
+        self._finished_generate_replies.pop(request_id, None)
         return self._operation(
             job_id,
             "cancel-request",
