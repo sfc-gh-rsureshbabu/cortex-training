@@ -3957,17 +3957,31 @@ class TestDataPlane:
         c.generate("j1", prompts=["hello"])
         assert c._finished_generate_replies == {}
 
-    def test_generate_wait_undecodable_reply_still_returns_the_request_id(self):
-        reply = {
+    @staticmethod
+    def _undecodable_reply():
+        # A "result" event is what decoding a status reply unpacks, so this
+        # is the field a decode inside generate() would trip on.
+        bad_result = {"wire_format": "DSSST1", "encoding": "base64", "payload_b64": ""}
+        return {
             "request_id": "g1",
             "job_id": "j1",
             "status": "REQUEST_STATE_DONE",
-            "events": [{"type": "result_chunk", "payload_b64": "aGk=", "payload_sha256": "0" * 64}],
+            "events": [{"type": "result", "result": bad_result}],
         }
-        c = _make_client(post_json=reply)
+
+    def test_generate_wait_undecodable_reply_still_returns_the_request_id(self):
+        c = _make_client(post_json=self._undecodable_reply())
         assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g1"
-        with pytest.raises(RuntimeError, match="payload_sha256 mismatch"):
+        with pytest.raises(RuntimeError, match="payload_b64"):
             c.poll_request("j1", "g1")
+        c._session.get.assert_not_called()
+
+    def test_get_request_status_drops_an_undecodable_kept_reply(self):
+        c = _make_client(post_json=self._undecodable_reply(), get_json={"status": "REQUEST_STATE_DONE"})
+        c.generate("j1", prompts=["hello"], wait_seconds=40)
+        with pytest.raises(RuntimeError, match="payload_b64"):
+            c.get_request_status("j1", "g1")
+        assert c._finished_generate_replies == {}
         c._session.get.assert_not_called()
 
     def test_generate_wait_failed_reply_raises_without_poll(self):
