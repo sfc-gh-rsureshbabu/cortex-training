@@ -11,8 +11,14 @@ do not add executable training code to this skill.
 | --- | --- |
 | Student trainer | 8 GPUs, full-parameter BF16, ZeRO-2 with reduce-scatter, Hugging Face provider, Flash Attention 3 |
 | Student policy sampler | 8 GPUs, BF16, TP=1 (eight replicas), memory utilization 0.8 |
-| Simulator/grader pool | Two services, 8 GPUs each, TP=8, memory utilization 0.9, `kv_cache_dtype=fp8`, `reasoning_parser=glm45`, no forced eager mode |
+| Simulator/grader pool | On Cortex Training: one 16-GPU sampling job, TP=8 (two replicas), memory utilization 0.9, `kv_cache_dtype=fp8`, `reasoning_parser=glm45`, no forced eager mode |
 | Teacher during collection | 8 GPUs, BF16, TP=8, memory utilization 0.8; release before student training |
+
+For the Cortex Training GLM job, set `inference_config.n_gpus=16` and
+`inference_config.vllm_config.tensor_parallel_size=8`. This supplies two
+eight-GPU replicas of the same model within one job. Send both simulator and
+grader requests to that job; Cortex Training routes requests across its
+replicas. Do not create separate jobs or implement client-side replica routing.
 
 All components use 32,768-token context. Collection needs 24 GPUs; sequential
 student training and paired final evaluation need 32. The optional three-policy
@@ -135,7 +141,7 @@ hardcoded winner; later updates regressed. Freeze selections and their hashes
 before full or confirmation results are seen.
 
 Reload the selection into a fresh sampler and evaluate it alongside a fresh
-untrained base with matched serving layout, seeds, GLM assignments, and decoding.
+untrained base with matched serving layout, seeds, GLM routing mode, and decoding.
 The historical two-policy final panel has 912 episodes. The optional separate
 SFT/GRPO comparison uses three unique policies, 1,368 episodes; avoid duplicate
 evaluation when the selected candidate is already one of them.

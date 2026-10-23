@@ -29,7 +29,7 @@ the integration rather than assuming old SDK signatures still work.
 
 ## Ordered Partition
 
-IDs are strings. Preserve these orders for task cycling and replica assignment;
+IDs are strings. Preserve these orders for task cycling and evaluation;
 do not reshuffle the split or sort IDs numerically.
 
 Training, 74 IDs:
@@ -108,10 +108,19 @@ Use four trials with seeds, in order:
 `626729`, `373753`, `361454`, `1567`. These were generated from Python
 `random.Random(300)` using four inclusive draws from 0 to 1,000,000.
 Development always contains 64 episodes per policy; a full panel contains 456.
-Use concurrency 16 and two GLM replicas, assigning an episode to replica
-`(task_index + trial_index) modulo 2` with zero-based indices. Match that
-assignment across compared policies. Preserve upstream base-task order for
-full panels and the listed cohort orders for separate panels.
+Use concurrency 16 and two GLM replicas. On Cortex Training, provision them
+within one sampling job using 16 GPUs and tensor parallel size 8, as specified
+in [training-recipe.md](training-recipe.md). Send all simulator/grader requests
+to that job and let the backend route them; client-side replica assignment is
+not required.
+
+The historical two-service layout assigned episodes by
+`(task_index + trial_index) modulo 2` with zero-based indices. Backend-managed
+routing preserves the two-replica resource layout but does not guarantee that
+historical assignment or bitwise replay. Freeze and record the routing mode
+before collection, use the same mode across compared policies, and disclose
+the distinction. Preserve upstream base-task order for full panels and the
+listed cohort orders for separate panels.
 
 Use upstream `compute_metrics`, including Pass^1 through Pass^4. Pass^k is
 consistency, not best-of-k pass@k: a task with `s` successes in four trials

@@ -18,6 +18,12 @@ in a separate user-chosen workspace. No original demo scripts, datasets,
 connection files, run directories, or hosted checkpoints are prerequisites.
 Do not assume historical authorization to spend GPUs or send data to a service.
 
+On Cortex Training, use one 16-GPU GLM-5.3 sampling job with tensor parallel
+size 8 for the simulator/grader pool. The backend runs two replicas and routes
+requests; do not create two separate GLM jobs. See the resource settings in
+[training-recipe.md](references/training-recipe.md) and the routing distinction
+in [protocol.md](references/protocol.md).
+
 ## References
 
 - Read [protocol.md](references/protocol.md) before collection, training, or

@@ -11,8 +11,10 @@ Use fresh, untrained `Qwen/Qwen3.8-27B` as the actor, with frozen GLM-5.3
 customer simulation and assertion grading. Collect exactly two attempts for
 each of the ordered 74 training tasks: trial 0 seed `918273`, trial 1 seed
 `918274`, for 148 episodes total. Use temperature 0, top-p 1, concurrency 8,
-32K context, and 2,048 output tokens per call. Use the two-replica assignment
-in the protocol. No demonstration collection on development or confirmation.
+32K context, and 2,048 output tokens per call. Use the simulator/grader pool
+routing described in the protocol; on Cortex Training, send requests to the
+single 16-GPU, TP=8 GLM job and let the backend route across its two replicas.
+No demonstration collection on development or confirmation.
 
 The historical collection yielded 124 successful retained conversations,
 covering 68 tasks, with 1,582 supervised assistant turns. Every retained
