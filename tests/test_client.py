@@ -3789,7 +3789,7 @@ class TestDataPlane:
         c = _make_client(post_json=self._done_reply())
         assert c.generate("j1", prompts=["hello"], wait_seconds=0) == nc.GenerateHandle("g1", None)
 
-    @pytest.mark.parametrize("wait_seconds", [40, 3600, 2**31 - 1])
+    @pytest.mark.parametrize("wait_seconds", [40, 3600, 2**31])
     def test_generate_wait_read_timeout_outlasts_the_capped_wait(self, wait_seconds):
         c = CortexTrainingClient(
             base_url="http://test.local", database="DB", schema="SCH",
@@ -3808,10 +3808,10 @@ class TestDataPlane:
         c.generate("j1", prompts=["hello"], wait_seconds=40)
         assert c._session.post.call_args.kwargs["timeout"] == (30.0, 600.0)
 
-    @pytest.mark.parametrize("wait_seconds", [-1, 1.5, True, "40", 2**31])
+    @pytest.mark.parametrize("wait_seconds", [-1, 1.5, True, "40"])
     def test_generate_rejects_a_bad_wait(self, wait_seconds):
         c = _make_client(post_json={"request_id": "g1"})
-        with pytest.raises(ValueError, match="wait_seconds"):
+        with pytest.raises(ValueError, match="wait_seconds must be a non-negative integer"):
             c.generate("j1", prompts=["hello"], wait_seconds=wait_seconds)
         c._session.post.assert_not_called()
 
@@ -4052,6 +4052,7 @@ class TestDataPlane:
             polled.poll_request("j1", "g1")
         assert str(from_generate.value) == str(from_poll.value) == f"Request g1 ended with state '{state}': oom"
         assert type(from_generate.value) is type(from_poll.value)
+        assert from_generate.value.request_id == from_poll.value.request_id == "g1"
         assert getattr(from_generate.value, nc._SERVER_FAILURE_ATTR, False) == (state == "failed")
         waited._session.get.assert_not_called()
 

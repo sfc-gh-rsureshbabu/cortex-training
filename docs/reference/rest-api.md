@@ -242,7 +242,7 @@ as `JOB_STATE_RUNNING`. `wait_for_job()` lowercases and removes the
 | `failed` | Failure |
 | `cancelled`, `canceled` | Cancelled |
 
-Raw enum names such as `REQUEST_STATE_DONE` can also appear.
+The REST API sends raw enum names such as `REQUEST_STATE_DONE`.
 `poll_request()` normalizes them internally.
 
 ### 3.4 Poll timing
@@ -1219,10 +1219,10 @@ instead of returning at once:
 POST /{job_id}/generate?wait_seconds=40
 ```
 
-- `wait_seconds` is a whole number of seconds from 0 to 2147483647. The server
-  holds the call for at most 40 seconds, whatever the value, and may not wait
-  at all. A negative, non-integer or larger value is rejected with HTTP 400
-  (the Python client raises `ValueError` before sending). On a
+- `wait_seconds` is a whole number of seconds, 0 or more. The server holds the
+  call for at most 40 seconds, whatever the value, and may not wait at all. A
+  negative, empty or non-integer value is rejected with HTTP 400 (the Python
+  client raises `ValueError` before sending). On a
   request-chunked generate, only the final chunk's POST carries it.
 - When the call did not wait (`wait_seconds` omitted or `0`, waiting not
   available, or a server that ignores the parameter), the reply is the plain
@@ -1358,7 +1358,7 @@ Example:
 ```json
 {
   "request_id": "request-id",
-  "status": "done",
+  "status": "REQUEST_STATE_DONE",
   "created_at": "2026-07-20T18:00:00Z",
   "updated_at": "2026-07-20T18:00:01Z",
   "result": {},

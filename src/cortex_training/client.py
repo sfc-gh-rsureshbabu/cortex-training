@@ -247,8 +247,6 @@ _FAILED_REQUEST_STATES = frozenset({"failed", "cancelled", "canceled"})
 _TERMINAL_REQUEST_STATES = _SUCCEEDED_REQUEST_STATES | _FAILED_REQUEST_STATES
 # Longest wait the service grants a generate, whatever wait_seconds asks for.
 _MAX_GENERATE_WAIT_SECONDS = 40
-# Largest wait_seconds the service accepts (a signed 32-bit int); above it, HTTP 400.
-_MAX_WAIT_SECONDS_PARAM = 2**31 - 1
 # The service answers a waiting call within 30 s after the wait ends; 45 s
 # leaves 15 s on top, so the reply arrives before the read timeout fires.
 _GENERATE_WAIT_READ_MARGIN_SECONDS = 45.0
@@ -754,7 +752,7 @@ def _metric_identity(
         elif isinstance(result, dict) and result.get("request_id") is not None:
             attributes["request_id"] = result["request_id"]
         elif isinstance(getattr(result, "request_id", None), str):
-            # Set on a waited generate's handle, and on the error it raises when the generation failed.
+            # Set on a waited generate's handle, and on the error raised for a failed request.
             attributes["request_id"] = result.request_id
     return attributes
 
@@ -5456,11 +5454,9 @@ class CortexTrainingClient:
         if wait_seconds is not None and (
             isinstance(wait_seconds, bool)
             or not isinstance(wait_seconds, int)
-            or not 0 <= wait_seconds <= _MAX_WAIT_SECONDS_PARAM
+            or wait_seconds < 0
         ):
-            raise ValueError(
-                f"wait_seconds must be an integer from 0 to {_MAX_WAIT_SECONDS_PARAM}; got {wait_seconds!r}"
-            )
+            raise ValueError(f"wait_seconds must be a non-negative integer; got {wait_seconds!r}")
         body = self._build_generate_frame("generate", job_id, prompts, sampling_params, routing_key, strict)
         wait_kwargs: dict[str, Any] = {}
         if wait_seconds:
@@ -5491,11 +5487,7 @@ class CortexTrainingClient:
         """The result in a waited generate reply, or None when the caller must poll."""
         state = self._normalize_request_status(str(response.get("status") or ""))
         if state in _FAILED_REQUEST_STATES:
-            try:
-                self._finished_request_result(request_id, response, state, [], None)  # raises
-            except RuntimeError as exc:
-                exc.request_id = request_id  # type: ignore[attr-defined]  # read by the outcome metric
-                raise
+            self._finished_request_result(request_id, response, state, [], None)  # raises
         next_cursor = response.get("next_cursor")
         if state not in _SUCCEEDED_REQUEST_STATES or (isinstance(next_cursor, str) and next_cursor):
             return None
@@ -5506,7 +5498,9 @@ class CortexTrainingClient:
             return self._finished_request_result(
                 request_id, status, state, [chunk for chunk in chunks if chunk is not None], None
             )
-        except Exception:  # noqa: BLE001 - the request id is still good; a poll reports the error
+        # RuntimeError and ValueError (incl. WireError, base64, JSON) are the decoders'
+        # own errors; a DSSST1 header or tree of the wrong shape raises the others.
+        except (RuntimeError, ValueError, LookupError, TypeError, AttributeError):
             logger.warning("waited generate %s reply not decodable; caller polls", request_id, exc_info=True)
             self._generate_request_ids.add(request_id)
             return None
@@ -6131,7 +6125,8 @@ class CortexTrainingClient:
         """The result of a request in a terminal ``state``; raises if it failed or was cancelled.
 
         Shared by :meth:`poll_request` and a waited :meth:`generate`, so both
-        decode and record a result the same way.
+        decode and record a result the same way. The error raised for a failed
+        or cancelled request has a ``request_id`` attribute.
         """
         if state in _SUCCEEDED_REQUEST_STATES:
             # ``payload`` is the result as the sub-job returned it, for the local
@@ -6175,10 +6170,9 @@ class CortexTrainingClient:
             self._fwd_bwd_request_debug.pop(request_id, None)
         self._generate_request_ids.discard(request_id)
         self._forward_request_ids.discard(request_id)
-        raise _server_failure(
-            RuntimeError(f"Request {request_id} ended with state '{state}': {error}"),
-            failed=state == "failed",
-        )
+        exc = RuntimeError(f"Request {request_id} ended with state '{state}': {error}")
+        exc.request_id = request_id  # type: ignore[attr-defined]  # read by the outcome metric
+        raise _server_failure(exc, failed=state == "failed")
 
     @_track_operation("poll_request")
     def poll_request(self, job_id: str, request_id: str) -> dict:
