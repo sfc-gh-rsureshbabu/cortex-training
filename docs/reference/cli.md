@@ -166,7 +166,7 @@ cortex-training fwd-bwd --help
 | `submit` | Return after submission | `--wait` waits until running; `--dry-run` validates without submitting |
 | `wait JOB_ID` | Wait until running, not until training finishes | Use `get JOB_ID` to inspect current status |
 | `fwd-bwd` | Poll the submitted request until completion | Set top-level `"poll": false` in the input JSON |
-| `generate` | Submit without waiting (`"wait_seconds"` is `0`), then poll the request until completion | Set top-level `"wait_seconds"` to have the submit wait up to 40 s for the result; `"poll": false` prints only the `request_id` |
+| `generate` | Submit without waiting, then poll the request until completion | Set top-level `"wait_seconds"` to have the submit wait up to 40 s for the result; `"poll": false` prints only the `request_id` |
 | `step` | Poll until completion; learning rate `1e-4` | Set `--lr`; polling cannot be disabled |
 | `load`, `weight-sync` | Poll the submitted request until completion | `--no-poll` returns without waiting for the result |
 | `capacity` | Query each GPU type the account supports | Select one with `--hardware` |
@@ -565,13 +565,14 @@ all prompts or a list of objects/nulls aligned with `prompts`. A flat list of
 integers such as `"prompts": [1, 2, 3]` is one pre-tokenized prompt, not three;
 use the nested form `[[1, 2], [3, 4]]` for a batch. The CLI submits `generate`
 and polls the request by default. Set `"poll": false` to print only the
-submitted `request_id`. By default the submit does not wait. Set a top-level
-`"wait_seconds"` (whole seconds; the server caps it at 40) to have the submit
-wait for the result, so a short generation needs no poll. If the server does
-not wait, the CLI polls as before. A waiting submit is not retried on a 5xx or
-a read timeout, because the generation may already be running; see
-[REST API section 3.5](rest-api.md#35-retries). `"wait_seconds"` cannot be
-combined with `"poll": false`.
+submitted `request_id`. Waiting is off unless `"wait_seconds"` is set. Set a
+top-level `"wait_seconds"` (whole seconds; the server caps it at 40) to have
+the submit wait for the result, so a short generation needs no poll. If the
+result did not come back with the submit, the CLI polls as before. A waiting
+submit is not retried on a 5xx or a read timeout, because the generation may
+already be running; see [REST API section 3.5](rest-api.md#35-retries). A
+`"wait_seconds"` above `0` cannot be combined with `"poll": false`; `0` or
+`null` means no wait and is accepted.
 
 ### Sync Training Weights
 

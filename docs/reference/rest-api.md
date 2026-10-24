@@ -292,8 +292,9 @@ ambiguous response does not accidentally create a second server-assigned job.
 
 A generate sent with `wait_seconds` above `0` is retried only on failures that
 come before any generation starts: a connection failure, or HTTP 429, 404, 409,
-307 or 308. The 404 and 409 exceptions above still apply: a job-not-found 404
-and a chunk-group 409 are not retried. A 5xx, a read timeout, or a reset after
+307 or 308. The job-not-found 404 exception above still applies, and a
+chunk-group 409 ([section 9.3](#93-request-chunking)) is not retried. A 5xx, a
+read timeout, or a reset after
 the request was sent is raised instead, because the server may already be
 generating and a resend would run the generation twice. That includes 503 and
 504: a gateway can return them after the backend already accepted the call. A
@@ -1240,18 +1241,23 @@ POST /{job_id}/generate?wait_seconds=40
 Python call:
 
 ```python
-request_id = client.generate(job_id, prompts=["Hello"], wait_seconds=40)
-result = client.poll_request(job_id, request_id)
+handle = client.generate(job_id, prompts=["Hello"], wait_seconds=40)
+result = handle.result
+if result is None:
+    result = client.poll_request(job_id, handle.request_id)
 ```
 
-`generate()` still returns only the `request_id`. If the reply is terminal, the
-client keeps it, and the next `poll_request()` for that id returns the result
-(or raises for a failed request) without another HTTP call. Any other reply is
-polled as before. The next `get_request_status()` without a `cursor` also
-returns the kept reply once, without an HTTP call; the server may already have
-dropped its copy, so a later GET is not guaranteed to show the result again.
-`cancel_request()` drops a kept reply. While 1,024 kept replies are waiting to
-be read, further generates are sent without a wait.
+With `wait_seconds`, `generate()` returns a `GenerateHandle` instead of the bare
+`request_id`. Its `result` is the same value `poll_request()` would return, and
+is set only when the reply says the generation succeeded and carries the whole
+result (no `next_cursor`). Otherwise it is `None`: the generation was still
+running, the server did not wait, the result was chunked, or the reply could
+not be decoded, and the caller polls `request_id` as usual. A generation that
+failed or was cancelled within the wait makes `generate()` raise the same error
+`poll_request()` raises. `wait_seconds=0` sends no wait and returns a handle
+with no result. The client keeps no copy of the reply: the handle the caller
+holds is the only one, and the server may already have dropped its own, so a
+later GET is not guaranteed to show the result again.
 
 For a waiting call, the read timeout is raised to at least the capped wait plus
 45 seconds, so the server ends the call before the client gives up on it. The

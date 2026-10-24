@@ -226,12 +226,12 @@ supported`. The short alias `log_prob` is rejected the same way.
 |---|---|---|
 | `forward_backward(job_id, data)` | `request_id` | `data` is a DSSST1 frame; always chunk-wrapped |
 | `step(job_id, learning_rate=None)` | `request_id` | Omitting the rate uses the job's optimizer setting |
-| `generate(job_id, prompts, sampling_params=None, routing_key=None, strict=None, wait_seconds=None)` | `request_id` | Pre-tokenized prompts are length-checked client-side. `wait_seconds` asks the server to hold the call until the result is ready (capped at 40 seconds), so `poll_request` can return it without another request; see [REST API section 6.6](rest-api.md#waiting-for-the-result-wait_seconds) |
+| `generate(job_id, prompts, sampling_params=None, routing_key=None, strict=None, wait_seconds=None)` | `request_id`, or `GenerateHandle` with `wait_seconds` | Pre-tokenized prompts are length-checked client-side. `wait_seconds` asks the server to hold the call until the result is ready (capped at 40 seconds); the handle's `result` is then what `poll_request` would return, or `None` when the caller must poll `request_id`; see [REST API section 6.6](rest-api.md#waiting-for-the-result-wait_seconds) |
 | `generate_stream(...)` | response dict | Same DSSST1 body encoding as `generate`, sent in one POST; read progress with `get_request_status` |
 | `weight_sync(job_id, source_sub_job_id, target_sub_job_ids, weight_format=None)` | `request_id` | `weight_format="lora"` syncs adapters only |
 | `forward(job_id, payload, ...)` | response dict | Byte frames that exceed the `/operation` JSON ceiling are request-chunked; see [rest-api.md section 7.1](rest-api.md#71-forward) |
 | `poll_request(job_id, request_id)` | result dict | Handles backoff, DSSST1 decoding, chunked results, and envelope `metrics` merge (envelope wins on key collision) |
-| `get_request_status(job_id, request_id, max_events=None, cursor=None)` | status dict | Without a `cursor`, returns a terminal reply kept from `generate(wait_seconds=...)` once, with no HTTP call |
+| `get_request_status(job_id, request_id, max_events=None, cursor=None)` | status dict | |
 | `cancel_request(job_id, request_id, ...)` | response dict | |
 
 A training sub-job with router replay picks how forward/backward treats rows

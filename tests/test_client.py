@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import dataclasses
 import gzip
 import importlib
 import json
@@ -3755,6 +3756,14 @@ class TestDataPlane:
         assert "params" not in kwargs
         assert "timeout" not in kwargs
 
+    def test_generate_without_wait_returns_the_request_id(self):
+        c = _make_client(post_json=self._done_reply())
+        assert c.generate("j1", prompts=["hello"]) == "g1"
+
+    def test_generate_wait_zero_returns_a_handle_with_no_result(self):
+        c = _make_client(post_json=self._done_reply())
+        assert c.generate("j1", prompts=["hello"], wait_seconds=0) == nc.GenerateHandle("g1", None)
+
     @pytest.mark.parametrize("wait_seconds", [40, 3600])
     def test_generate_wait_read_timeout_outlasts_the_capped_wait(self, wait_seconds):
         c = CortexTrainingClient(
@@ -3824,7 +3833,7 @@ class TestDataPlane:
         c = _make_client()
         c.max_retries = 3
         c._session.post.side_effect = [failure, _make_response({"request_id": "g2"})]
-        assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g2"
+        assert c.generate("j1", prompts=["hello"], wait_seconds=40).request_id == "g2"
         assert c._session.post.call_count == 2
 
     def test_generate_wait_job_not_found_is_final(self, monkeypatch):
@@ -3840,6 +3849,20 @@ class TestDataPlane:
         with pytest.raises(nc.requests.exceptions.HTTPError):
             c.generate("j1", prompts=["hello"], wait_seconds=40)
         assert c._session.post.call_count == 1
+
+    def test_generate_wait_job_not_found_is_retried_for_a_just_created_job(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._note_created_job({"job_id": "j1"})
+        c._session.post.side_effect = [
+            _not_found("517601", "Training job j1 not found", url=f"{c._prefix}/j1/generate"),
+            _make_response({"request_id": "g2"}),
+        ]
+        assert c.generate("j1", prompts=["hello"], wait_seconds=40).request_id == "g2"
+        assert c._session.post.call_count == 2
 
     def test_generate_wait_chunk_group_conflict_is_not_retried(self, monkeypatch):
         from tenacity import wait_none
@@ -3892,7 +3915,7 @@ class TestDataPlane:
             _make_response({"chunk_cached": True}),
             _make_response({"request_id": "g4"}),
         ]
-        assert c.generate("j1", prompts=["x" * (70 * 1024)], wait_seconds=40) == "g4"
+        assert c.generate("j1", prompts=["x" * (70 * 1024)], wait_seconds=40).request_id == "g4"
         assert c._session.post.call_count == 3
         first, _, last = c._session.post.call_args_list
         assert "params" not in first.kwargs
@@ -3904,9 +3927,9 @@ class TestDataPlane:
             post_json={"request_id": "g1", "job_id": "j1"},
             get_json={"status": "done", "result": {"text": "hi"}},
         )
-        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
-        assert c._finished_generate_replies == {}
-        assert c.poll_request("j1", rid) == {"text": "hi"}
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert handle == nc.GenerateHandle("g1", None)
+        assert c.poll_request("j1", handle.request_id) == {"text": "hi"}
         assert c._session.get.call_count == 1
 
     @pytest.mark.parametrize("status", ["REQUEST_STATE_PENDING", "running"])
@@ -3916,9 +3939,9 @@ class TestDataPlane:
             post_json={"request_id": "g1", "job_id": "j1", "status": status},
             get_json={"status": "done", "result": {"text": "hi"}},
         )
-        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
-        assert c._finished_generate_replies == {}
-        assert c.poll_request("j1", rid) == {"text": "hi"}
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert handle == nc.GenerateHandle("g1", None)
+        assert c.poll_request("j1", handle.request_id) == {"text": "hi"}
         assert c._session.get.call_count == 1
 
     @staticmethod
@@ -3943,19 +3966,27 @@ class TestDataPlane:
             },
         }
 
-    def test_generate_wait_finished_reply_needs_no_poll(self):
+    def test_generate_wait_finished_reply_carries_the_result(self):
         c = _make_client(post_json=self._done_reply())
-        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
-        result = c.poll_request("j1", rid)
-        assert result["results"][0]["text"] == "hi"
-        assert result["results"][0]["token_ids"] == [1, 2, 3]
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert handle.request_id == "g1"
+        assert handle.result["results"][0]["text"] == "hi"
+        assert handle.result["results"][0]["token_ids"] == [1, 2, 3]
         c._session.get.assert_not_called()
-        assert c._finished_generate_replies == {}
 
-    def test_generate_without_wait_keeps_no_reply(self):
+    def test_generate_wait_result_matches_poll_request(self):
+        waited = _make_client(post_json=self._done_reply())
+        polled = _make_client(post_json={"request_id": "g1"}, get_json=self._done_reply())
+        polled_id = polled.generate("j1", prompts=["hello"])
+        assert waited.generate("j1", prompts=["hello"], wait_seconds=40).result == polled.poll_request(
+            "j1", polled_id
+        )
+
+    def test_generate_wait_handle_is_frozen(self):
         c = _make_client(post_json=self._done_reply())
-        c.generate("j1", prompts=["hello"])
-        assert c._finished_generate_replies == {}
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            handle.result = None
 
     @staticmethod
     def _undecodable_reply():
@@ -3969,29 +4000,31 @@ class TestDataPlane:
             "events": [{"type": "result", "result": bad_result}],
         }
 
-    def test_generate_wait_undecodable_reply_still_returns_the_request_id(self):
-        c = _make_client(post_json=self._undecodable_reply())
-        assert c.generate("j1", prompts=["hello"], wait_seconds=40) == "g1"
-        with pytest.raises(RuntimeError, match="payload_b64"):
-            c.poll_request("j1", "g1")
-        c._session.get.assert_not_called()
+    def test_generate_wait_undecodable_reply_returns_a_handle_to_poll(self, monkeypatch):
+        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+        c = _make_client(post_json=self._undecodable_reply(), get_json=self._done_reply())
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert handle == nc.GenerateHandle("g1", None)
+        # The id is still known as a generate, so the poll restores tensor lists.
+        assert c.poll_request("j1", "g1")["results"][0]["token_ids"] == [1, 2, 3]
 
-    def test_get_request_status_drops_an_undecodable_kept_reply(self):
-        c = _make_client(post_json=self._undecodable_reply(), get_json={"status": "REQUEST_STATE_DONE"})
-        c.generate("j1", prompts=["hello"], wait_seconds=40)
-        with pytest.raises(RuntimeError, match="payload_b64"):
-            c.get_request_status("j1", "g1")
-        assert c._finished_generate_replies == {}
-        c._session.get.assert_not_called()
-
-    def test_generate_wait_failed_reply_raises_without_poll(self):
-        c = _make_client(
-            post_json={"request_id": "g1", "job_id": "j1", "status": "REQUEST_STATE_FAILED", "error": "oom"},
-        )
-        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
-        with pytest.raises(RuntimeError, match="oom"):
-            c.poll_request("j1", rid)
-        c._session.get.assert_not_called()
+    @pytest.mark.parametrize(
+        ("status", "state"),
+        [("REQUEST_STATE_FAILED", "failed"), ("REQUEST_STATE_CANCELLED", "cancelled")],
+    )
+    def test_generate_wait_ended_reply_raises_as_poll_request_does(self, status, state):
+        reply = {"request_id": "g1", "job_id": "j1", "status": status, "error": "oom"}
+        waited = _make_client(post_json=reply)
+        with pytest.raises(RuntimeError) as from_generate:
+            waited.generate("j1", prompts=["hello"], wait_seconds=40)
+        polled = _make_client(post_json={"request_id": "g1"}, get_json=reply)
+        polled.generate("j1", prompts=["hello"])
+        with pytest.raises(RuntimeError) as from_poll:
+            polled.poll_request("j1", "g1")
+        assert str(from_generate.value) == str(from_poll.value) == f"Request g1 ended with state '{state}': oom"
+        assert type(from_generate.value) is type(from_poll.value)
+        assert getattr(from_generate.value, nc._SERVER_FAILURE_ATTR, False) == (state == "failed")
+        waited._session.get.assert_not_called()
 
     def test_generate_wait_chunked_reply_reads_the_rest_by_cursor(self, monkeypatch):
         from cortex_training import wire
@@ -4011,52 +4044,13 @@ class TestDataPlane:
                 "events": [events[0]],
                 "next_cursor": "1",
             },
-            get_json={"status": "REQUEST_STATE_DONE", "events": events[1:]},
+            get_json={"status": "REQUEST_STATE_DONE", "events": events},
         )
-        rid = c.generate("j1", prompts=["hello"], wait_seconds=40)
-        assert c.poll_request("j1", rid) == {"text": "x" * 20_000}
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert handle == nc.GenerateHandle("g1", None)
+        # Polling restarts from the first event, so nothing is lost or doubled.
+        assert c.poll_request("j1", handle.request_id) == {"text": "x" * 20_000}
         assert c._session.get.call_count == 1
-        assert c._session.get.call_args.kwargs["params"] == {"cursor": "1"}
-
-    def test_get_request_status_returns_a_kept_reply_once(self):
-        c = _make_client(post_json=self._done_reply(), get_json={"status": "REQUEST_STATE_DONE"})
-        c.generate("j1", prompts=["hello"], wait_seconds=40)
-        status = c.get_request_status("j1", "g1")
-        assert status["status"] == "REQUEST_STATE_DONE"
-        assert status["result"]["wire_format"] == "DSSST1"
-        c._session.get.assert_not_called()
-        assert c._finished_generate_replies == {}
-        c.get_request_status("j1", "g1")
-        assert c._session.get.call_count == 1
-
-    def test_get_request_status_with_a_cursor_skips_the_kept_reply(self):
-        c = _make_client(post_json=self._done_reply(), get_json={"status": "REQUEST_STATE_DONE"})
-        c.generate("j1", prompts=["hello"], wait_seconds=40)
-        c.get_request_status("j1", "g1", cursor="1")
-        assert c._session.get.call_args.kwargs["params"] == {"cursor": "1"}
-        assert "g1" in c._finished_generate_replies
-
-    def test_cancel_request_frees_a_kept_reply(self):
-        c = _make_client(post_json=self._done_reply())
-        c.generate("j1", prompts=["hello"], wait_seconds=40)
-        c.cancel_request("j1", "g1")
-        assert c._finished_generate_replies == {}
-
-    def test_generate_stops_waiting_while_kept_replies_are_full(self):
-        c = _make_client()
-        c._MAX_FINISHED_GENERATE_REPLIES = 2
-        c._session.post.side_effect = [_make_response(self._done_reply(rid)) for rid in ("g1", "g2")] + [
-            _make_response({"request_id": "g3", "job_id": "j1"})
-        ]
-        for _ in range(3):
-            c.generate("j1", prompts=["hello"], wait_seconds=40)
-        assert list(c._finished_generate_replies) == ["g1", "g2"]
-        last = c._session.post.call_args.kwargs
-        assert "params" not in last
-        assert "timeout" not in last
-
-    def test_max_finished_generate_replies_default(self):
-        assert CortexTrainingClient._MAX_FINISHED_GENERATE_REPLIES == 1024
 
     def test_generate_stream_rejects_oversized_payload(self):
         c = _make_client(post_json={"request_id": "s2", "count": 1})
