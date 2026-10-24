@@ -919,11 +919,12 @@ def _is_waiting_generate_retryable(exc: BaseException) -> bool:
 
 @dataclass(frozen=True)
 class GenerateHandle:
-    """What ``generate(..., wait_seconds=N)`` returns.
+    """Returned by ``generate`` when ``wait_seconds`` is passed.
 
-    ``result`` is the value :meth:`CortexTrainingClient.poll_request` would
-    return, set only when the generation finished within the wait and the whole
-    result came back in the reply. ``None`` means: poll ``request_id``.
+    If the server sent back the complete, successful result before the wait
+    ran out, ``result`` holds it, in the same form
+    :meth:`CortexTrainingClient.poll_request` gives. Otherwise ``result`` is
+    ``None`` and ``request_id`` should be polled.
     """
 
     request_id: str
@@ -5451,8 +5452,10 @@ class CortexTrainingClient:
 
         A waiting submit is retried only on failures that come before any
         generation starts: connection failures, and HTTP 429, 404, 409, 307 or
-        308. A 5xx, a read timeout, or a reset after send is raised, because
-        the generation may already be running and a retry would run it twice.
+        308. A job-not-found 404 is still retried only within 120 seconds of
+        this client creating the job, and a chunk-group 409 is not retried. A
+        5xx, a read timeout, or a reset after send is raised, because the
+        generation may already be running and a retry would run it twice.
         """
         if wait_seconds is not None and (
             isinstance(wait_seconds, bool)
@@ -5487,7 +5490,7 @@ class CortexTrainingClient:
         return GenerateHandle(request_id=request_id, result=result)
 
     def _waited_generate_result(self, request_id: str, response: dict) -> dict | None:
-        """The result in a waited generate reply, or None when the caller must poll."""
+        """Decode a waited generate reply; ``None`` if it holds no complete result yet."""
         state = self._normalize_request_status(str(response.get("status") or ""))
         if state in _FAILED_REQUEST_STATES:
             self._finished_request_result(request_id, response, state, [], None)  # raises
@@ -6125,11 +6128,11 @@ class CortexTrainingClient:
         result_chunks: list[bytes],
         debug_label: str | None,
     ) -> dict:
-        """The result of a request in a terminal ``state``; raises if it failed or was cancelled.
+        """Turn a finished request into its result, or raise for a failure or cancellation.
 
-        Shared by :meth:`poll_request` and a waited :meth:`generate`, so both
-        decode and record a result the same way. The error raised for a failed
-        or cancelled request has a ``request_id`` attribute.
+        :meth:`poll_request` and a waited :meth:`generate` both go through
+        here, so their results are decoded and recorded identically. The raised
+        error exposes the request's ``request_id``.
         """
         if state in _SUCCEEDED_REQUEST_STATES:
             # ``payload`` is the result as the sub-job returned it, for the local
