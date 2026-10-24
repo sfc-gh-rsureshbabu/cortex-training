@@ -1219,9 +1219,10 @@ instead of returning at once:
 POST /{job_id}/generate?wait_seconds=40
 ```
 
-- `wait_seconds` is a whole number of seconds. The server holds the call for at
-  most 40 seconds, whatever the value, and may not wait at all. A negative or
-  non-integer value is rejected with HTTP 400. On a request-chunked generate,
+- `wait_seconds` is a whole number of seconds from 0 to 2147483647. The server
+  holds the call for at most 40 seconds, whatever the value, and may not wait
+  at all. A negative, non-integer or larger value is rejected with HTTP 400
+  (the Python client raises `ValueError` before sending). On a request-chunked generate,
   only the final chunk's POST carries it.
 - When the call did not wait (`wait_seconds` omitted or `0`, waiting not
   available, or a server that ignores the parameter), the reply is the plain
@@ -1256,8 +1257,9 @@ not be decoded, and the caller polls `request_id` as usual. A generation that
 failed or was cancelled within the wait makes `generate()` raise the same error
 `poll_request()` raises. `wait_seconds=0` sends no wait and returns a handle
 with no result. The client keeps no copy of the reply: the handle the caller
-holds is the only one, and the server may already have dropped its own, so a
-later GET is not guaranteed to show the result again.
+holds is the only one. The server keeps a delivered result for about 60
+seconds after it last sent it, so a poll made right away (after a `None`
+result) still gets it, but a GET much later may not.
 
 For a waiting call, the read timeout is raised to at least the capped wait plus
 45 seconds, so the server ends the call before the client gives up on it. The

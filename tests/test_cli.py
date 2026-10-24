@@ -2125,7 +2125,7 @@ def test_generate_accepts_no_wait_without_poll(tmp_path, wait_seconds):
     }
 
 
-@pytest.mark.parametrize("wait_seconds", [5, -1, True])
+@pytest.mark.parametrize("wait_seconds", [5, -1, True, False, 0.0, "0"])
 def test_generate_rejects_wait_seconds_without_poll(tmp_path, wait_seconds):
     instances = []
     path = tmp_path / "generate.json"
@@ -2143,7 +2143,7 @@ def test_generate_rejects_wait_seconds_without_poll(tmp_path, wait_seconds):
     )
 
     assert rc != 0
-    assert "wait_seconds" in stderr.getvalue()
+    assert "only helps when the CLI polls" in stderr.getvalue()
     assert not instances or instances[0].generated_job_id is None
 
 

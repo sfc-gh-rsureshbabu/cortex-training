@@ -247,6 +247,8 @@ _FAILED_REQUEST_STATES = frozenset({"failed", "cancelled", "canceled"})
 _TERMINAL_REQUEST_STATES = _SUCCEEDED_REQUEST_STATES | _FAILED_REQUEST_STATES
 # Longest wait the service grants a generate, whatever wait_seconds asks for.
 _MAX_GENERATE_WAIT_SECONDS = 40
+# Largest wait_seconds the service accepts (a signed 32-bit int); above it, HTTP 400.
+_MAX_WAIT_SECONDS_PARAM = 2**31 - 1
 # The service answers a waiting call within 30 s after the wait ends; 45 s
 # leaves 15 s on top, so the reply arrives before the read timeout fires.
 _GENERATE_WAIT_READ_MARGIN_SECONDS = 45.0
@@ -751,6 +753,9 @@ def _metric_identity(
             attributes["request_id"] = result
         elif isinstance(result, dict) and result.get("request_id") is not None:
             attributes["request_id"] = result["request_id"]
+        elif getattr(result, "request_id", None) is not None:
+            # Set on a waited generate's handle, and on the error it raises when the generation failed.
+            attributes["request_id"] = result.request_id
     return attributes
 
 
@@ -2298,7 +2303,7 @@ class CortexTrainingClient:
             }
             if cancelled:
                 value["cancelled"] = True
-            attributes = _metric_identity(operation, arguments, result)
+            attributes = _metric_identity(operation, arguments, result if error is None else error)
             if error is not None:
                 value["error_message"] = (
                     _safe_metric_error_message(error)
@@ -5449,9 +5454,13 @@ class CortexTrainingClient:
         the generation may already be running and a retry would run it twice.
         """
         if wait_seconds is not None and (
-            isinstance(wait_seconds, bool) or not isinstance(wait_seconds, int) or wait_seconds < 0
+            isinstance(wait_seconds, bool)
+            or not isinstance(wait_seconds, int)
+            or not 0 <= wait_seconds <= _MAX_WAIT_SECONDS_PARAM
         ):
-            raise ValueError(f"wait_seconds must be a non-negative integer; got {wait_seconds!r}")
+            raise ValueError(
+                f"wait_seconds must be an integer from 0 to {_MAX_WAIT_SECONDS_PARAM}; got {wait_seconds!r}"
+            )
         body = self._build_generate_frame("generate", job_id, prompts, sampling_params, routing_key, strict)
         wait_kwargs: dict[str, Any] = {}
         if wait_seconds:
@@ -5482,7 +5491,11 @@ class CortexTrainingClient:
         """The result in a waited generate reply, or None when the caller must poll."""
         state = self._normalize_request_status(str(response.get("status") or ""))
         if state in _FAILED_REQUEST_STATES:
-            self._finished_request_result(request_id, response, state, [], None)  # raises
+            try:
+                self._finished_request_result(request_id, response, state, [], None)  # raises
+            except RuntimeError as exc:
+                exc.request_id = request_id  # type: ignore[attr-defined]  # read by the outcome metric
+                raise
         next_cursor = response.get("next_cursor")
         if state not in _SUCCEEDED_REQUEST_STATES or (isinstance(next_cursor, str) and next_cursor):
             return None
@@ -5494,7 +5507,7 @@ class CortexTrainingClient:
                 request_id, status, state, [chunk for chunk in chunks if chunk is not None], None
             )
         except Exception:  # noqa: BLE001 - the request id is still good; a poll reports the error
-            logger.debug("waited generate %s reply not decodable; caller polls", request_id, exc_info=True)
+            logger.warning("waited generate %s reply not decodable; caller polls", request_id, exc_info=True)
             self._generate_request_ids.add(request_id)
             return None
 

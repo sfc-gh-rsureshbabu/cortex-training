@@ -1059,6 +1059,31 @@ class TestOperationMetrics:
         assert value["retry_count"] == 0
         assert attributes == {"client.surface": "sdk", "job_id": "job-1", "request_id": "r1"}
 
+    def test_waited_generate_metric_has_request_id(self, monkeypatch):
+        monkeypatch.setenv(nc.ENABLE_SUCCESS_TELEMETRY_ENV, "1")
+        c = _make_client(post_json={"request_id": "g1", "job_id": "job-1"})
+        c._metric_emitter = MagicMock()
+
+        assert c.generate("job-1", prompts=["hello"], wait_seconds=40) == nc.GenerateHandle("g1", None)
+
+        attributes = c._metric_emitter.emit.call_args.kwargs["attributes"]
+        assert attributes == {"client.surface": "sdk", "job_id": "job-1", "request_id": "g1"}
+
+    @pytest.mark.parametrize("status", ["REQUEST_STATE_FAILED", "REQUEST_STATE_CANCELLED"])
+    def test_waited_generate_failure_metric_has_request_id(self, status):
+        c = _make_client(post_json={"request_id": "g1", "job_id": "job-1", "status": status, "error": "oom"})
+        c._metric_emitter = MagicMock()
+
+        with pytest.raises(RuntimeError, match="Request g1 ended"):
+            c.generate("job-1", prompts=["hello"], wait_seconds=40)
+
+        operation, value = c._metric_emitter.emit.call_args.args
+        attributes = c._metric_emitter.emit.call_args.kwargs["attributes"]
+        assert operation == "generate"
+        assert value["success"] is False
+        assert attributes["request_id"] == "g1"
+        assert attributes["error.type"] == "RuntimeError"
+
     def test_client_validation_error_metric_preserves_original_error(self):
         c = _make_client()
         c._metric_emitter = MagicMock()
@@ -3764,7 +3789,7 @@ class TestDataPlane:
         c = _make_client(post_json=self._done_reply())
         assert c.generate("j1", prompts=["hello"], wait_seconds=0) == nc.GenerateHandle("g1", None)
 
-    @pytest.mark.parametrize("wait_seconds", [40, 3600])
+    @pytest.mark.parametrize("wait_seconds", [40, 3600, 2**31 - 1])
     def test_generate_wait_read_timeout_outlasts_the_capped_wait(self, wait_seconds):
         c = CortexTrainingClient(
             base_url="http://test.local", database="DB", schema="SCH",
@@ -3783,7 +3808,7 @@ class TestDataPlane:
         c.generate("j1", prompts=["hello"], wait_seconds=40)
         assert c._session.post.call_args.kwargs["timeout"] == (30.0, 600.0)
 
-    @pytest.mark.parametrize("wait_seconds", [-1, 1.5, True, "40"])
+    @pytest.mark.parametrize("wait_seconds", [-1, 1.5, True, "40", 2**31])
     def test_generate_rejects_a_bad_wait(self, wait_seconds):
         c = _make_client(post_json={"request_id": "g1"})
         with pytest.raises(ValueError, match="wait_seconds"):
@@ -4026,16 +4051,31 @@ class TestDataPlane:
         assert getattr(from_generate.value, nc._SERVER_FAILURE_ATTR, False) == (state == "failed")
         waited._session.get.assert_not_called()
 
-    def test_generate_wait_chunked_reply_reads_the_rest_by_cursor(self, monkeypatch):
+    @staticmethod
+    def _result_chunk_events():
         from cortex_training import wire
 
-        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
         chunks = wire.encode_result_chunks({"text": "x" * 20_000}, max_bytes=12_000)
         assert len(chunks) > 1
-        events = [
+        return [
             {"type": "result_chunk", "payload_b64": base64.b64encode(chunk).decode("ascii")}
             for chunk in chunks
         ]
+
+    def test_generate_wait_reply_with_every_chunk_carries_the_result(self):
+        events = self._result_chunk_events()
+        reply = {"request_id": "g1", "job_id": "j1", "status": "REQUEST_STATE_DONE",
+                 "events": events, "next_cursor": ""}
+        waited = _make_client(post_json=reply)
+        handle = waited.generate("j1", prompts=["hello"], wait_seconds=40)
+        waited._session.get.assert_not_called()
+        polled = _make_client(post_json={"request_id": "g1"}, get_json=reply)
+        polled.generate("j1", prompts=["hello"])
+        assert handle.result == polled.poll_request("j1", "g1") == {"text": "x" * 20_000}
+
+    def test_generate_wait_chunked_reply_polls_from_the_first_page(self, monkeypatch):
+        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+        events = self._result_chunk_events()
         c = _make_client(
             post_json={
                 "request_id": "g1",
@@ -4051,6 +4091,7 @@ class TestDataPlane:
         # Polling restarts from the first event, so nothing is lost or doubled.
         assert c.poll_request("j1", handle.request_id) == {"text": "x" * 20_000}
         assert c._session.get.call_count == 1
+        assert "cursor" not in (c._session.get.call_args.kwargs.get("params") or {})
 
     def test_generate_stream_rejects_oversized_payload(self):
         c = _make_client(post_json={"request_id": "s2", "count": 1})

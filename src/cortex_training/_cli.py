@@ -1214,7 +1214,8 @@ def _cmd_generate(
     poll = _json_bool(spec.get("poll", True), "generate poll")
     # Opt-in: a waiting submit gives up the 5xx and read-timeout retries.
     wait_seconds = spec.get("wait_seconds")
-    if not poll and wait_seconds:
+    no_wait = wait_seconds is None or (type(wait_seconds) is int and wait_seconds == 0)
+    if not poll and not no_wait:
         raise ValueError(
             'generate "wait_seconds" only helps when the CLI polls for the result; '
             'remove it, or remove "poll": false'
