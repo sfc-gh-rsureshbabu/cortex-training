@@ -2125,11 +2125,12 @@ def test_generate_accepts_no_wait_without_poll(tmp_path, wait_seconds):
     }
 
 
-def test_generate_rejects_wait_seconds_without_poll(tmp_path):
+@pytest.mark.parametrize("wait_seconds", [5, -1, True])
+def test_generate_rejects_wait_seconds_without_poll(tmp_path, wait_seconds):
     instances = []
     path = tmp_path / "generate.json"
     path.write_text(
-        json.dumps({"poll": False, "wait_seconds": 5, "payload": {"prompts": ["hello"]}}),
+        json.dumps({"poll": False, "wait_seconds": wait_seconds, "payload": {"prompts": ["hello"]}}),
         encoding="utf-8",
     )
     stderr = io.StringIO()

@@ -571,8 +571,8 @@ the submit wait for the result, so a short generation needs no poll. If the
 result did not come back with the submit, the CLI polls as before. A waiting
 submit is not retried on a 5xx or a read timeout, because the generation may
 already be running; see [REST API section 3.5](rest-api.md#35-retries). A
-`"wait_seconds"` above `0` cannot be combined with `"poll": false`; `0` or
-`null` means no wait and is accepted.
+`"wait_seconds"` other than `0` or `null` cannot be combined with
+`"poll": false`; `0` or `null` means no wait and is accepted.
 
 ### Sync Training Weights
 
