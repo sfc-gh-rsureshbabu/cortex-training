@@ -5501,9 +5501,9 @@ class CortexTrainingClient:
             return self._finished_request_result(
                 request_id, status, state, [chunk for chunk in chunks if chunk is not None], None
             )
-        # RuntimeError and ValueError (incl. WireError, base64, JSON) are the decoders'
-        # own errors; a DSSST1 header or tree of the wrong shape raises the others.
-        except (RuntimeError, ValueError, LookupError, TypeError, AttributeError):
+        # Catch everything: the request is already submitted, so losing its id to an
+        # unexpected decode error is worse than a poll that raises the real one.
+        except Exception:
             logger.warning("waited generate %s reply not decodable; caller polls", request_id, exc_info=True)
             self._generate_request_ids.add(request_id)
             return None
