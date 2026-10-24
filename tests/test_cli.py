@@ -2144,6 +2144,7 @@ def test_generate_rejects_wait_seconds_without_poll(tmp_path, wait_seconds):
 
     assert rc != 0
     assert "only helps when the CLI polls" in stderr.getvalue()
+    assert f"got {wait_seconds!r}" in stderr.getvalue()
     assert not instances or instances[0].generated_job_id is None
 
 

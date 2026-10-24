@@ -565,14 +565,18 @@ all prompts or a list of objects/nulls aligned with `prompts`. A flat list of
 integers such as `"prompts": [1, 2, 3]` is one pre-tokenized prompt, not three;
 use the nested form `[[1, 2], [3, 4]]` for a batch. The CLI submits `generate`
 and polls the request by default. Set `"poll": false` to print only the
-submitted `request_id`. Waiting is off unless `"wait_seconds"` is set. Set a
-top-level `"wait_seconds"` (whole seconds; the server caps it at 40) to have
-the submit wait for the result, so a short generation needs no poll. If the
+submitted `request_id`. Waiting is off unless `"wait_seconds"` is set; the
+example's `0` means no wait. Set a top-level `"wait_seconds"` (whole seconds;
+the server caps it at 40) to have the submit wait for the result, so a short
+generation needs no poll. Like `"poll"`, it is read only from the top level of
+the file: a `"wait_seconds"` inside a `"payload"` object has no effect. If the
 result did not come back with the submit, the CLI polls as before. A waiting
-submit is not retried on a 5xx or a read timeout, because the generation may
-already be running; see [REST API section 3.5](rest-api.md#35-retries). A
-`"wait_seconds"` other than `0` or `null` cannot be combined with
-`"poll": false`; `0` or `null` means no wait and is accepted.
+submit is retried only when the connection could not be opened or on a status
+sent before the work starts. A 5xx, a read timeout or a TLS failure is raised,
+because the generation may already be running; see
+[REST API section 3.5](rest-api.md#35-retries). A `"wait_seconds"` other than
+`0` or `null` cannot be combined with `"poll": false`; `0` or `null` means no
+wait and is accepted.
 
 ### Sync Training Weights
 

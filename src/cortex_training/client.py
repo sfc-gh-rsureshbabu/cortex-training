@@ -898,7 +898,8 @@ _WAITING_GENERATE_RETRY_STATUSES = frozenset({429, 404, 409, 307, 308})
 
 
 def _is_waiting_generate_retryable(exc: BaseException) -> bool:
-    """Retry a waiting generate only on failures that come before it starts.
+    """Retry a waiting generate only on failures that come before it starts:
+    a connection that was never opened (not a TLS failure), or a status above.
 
     A read timeout, a reset after send, or any 5xx is raised rather than resent:
     the service may already be generating, and a gateway can answer 503 or 504
@@ -5457,9 +5458,10 @@ class CortexTrainingClient:
         and the server may have dropped the result by then.
 
         A waiting submit is retried only on failures that come before any
-        generation starts: connection failures, and HTTP 429, 404, 409, 307 or
-        308. A job-not-found 404 is still retried only within 120 seconds of
-        this client creating the job, and a chunk-group 409 is not retried. A
+        generation starts: a connection that could not be opened (refused or
+        connect timeout; a TLS failure does not count), and HTTP 429, 404, 409,
+        307 or 308. A job-not-found 404 is still retried only within 120 seconds
+        of this client creating the job, and a chunk-group 409 is not retried. A
         5xx, a read timeout, or a reset after send is raised, because the
         generation may already be running and a retry would run it twice.
         """

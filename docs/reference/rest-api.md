@@ -293,11 +293,12 @@ Create-job uses the narrower connection-establishment retry predicate so an
 ambiguous response does not accidentally create a second server-assigned job.
 
 A generate sent with `wait_seconds` above `0` is retried only on failures that
-come before any generation starts: a connection failure, or HTTP 429, 404, 409,
-307 or 308. The job-not-found 404 exception above still applies, and a
-chunk-group 409 ([section 9.3](#93-request-chunking)) is not retried. A 5xx, a
-read timeout, or a reset after
-the request was sent is raised instead, because the server may already be
+come before any generation starts: a connection that could not be opened
+(refused, or the connect timed out, the same test create-job uses), or HTTP
+429, 404, 409, 307 or 308. A TLS handshake failure is not retried. The
+job-not-found 404 exception above still applies, and a chunk-group 409
+([section 9.3](#93-request-chunking)) is not retried. A 5xx, a read timeout, or
+a reset after the request was sent is raised instead, because the server may already be
 generating and a resend would run the generation twice. That includes 503 and
 504: a gateway can return them after the backend already accepted the call. A
 generate without `wait_seconds` keeps the retries above. See
