@@ -572,8 +572,9 @@ generation needs no poll. Like `"poll"`, it is read only from the top level of
 the file: a `"wait_seconds"` inside a `"payload"` object has no effect. If the
 result did not come back with the submit, the CLI polls as before. A waiting
 submit is retried only when the connection could not be opened or on a status
-sent before the work starts. A 5xx, a read timeout or a TLS failure is raised,
-because the generation may already be running; see
+sent before the work starts. A 5xx, a read timeout, a TLS failure or a
+connection reset after the request was sent is raised, because the generation
+may already be running; see
 [REST API section 3.5](rest-api.md#35-retries). A `"wait_seconds"` other than
 `0` or `null` cannot be combined with `"poll": false`; `0` or `null` means no
 wait and is accepted.

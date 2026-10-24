@@ -920,7 +920,7 @@ def _is_waiting_generate_retryable(exc: BaseException) -> bool:
 
 @dataclass(frozen=True)
 class GenerateHandle:
-    """Returned by ``generate`` when ``wait_seconds`` is passed.
+    """Returned by ``generate`` when ``wait_seconds`` is not ``None``.
 
     If the server sent back the complete, successful result before the wait
     ran out, ``result`` holds it, in the same form
@@ -5419,8 +5419,8 @@ class CortexTrainingClient:
     ) -> str | GenerateHandle:
         """Submit a generate request to a sampling sub-job.
 
-        Returns the request_id, or a :class:`GenerateHandle` when
-        ``wait_seconds`` is given.
+        Returns a :class:`GenerateHandle` when ``wait_seconds`` is not
+        ``None``; with ``None`` (the default) it returns the request_id.
 
         The typed fields are serialized as a DSSST1 safetensors frame and sent
         as ``application/octet-stream``. Oversized frames are byte-chunked

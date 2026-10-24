@@ -1233,7 +1233,9 @@ POST /{job_id}/generate?wait_seconds=40
   final chunk's POST carries it.
 - When the call did not wait (`wait_seconds` omitted or `0`, waiting not
   available, or a server that ignores the parameter), the reply is the plain
-  handle `{"request_id", "job_id"}`.
+  handle `{"request_id", "job_id"}`. A server that waited but then could not
+  read the request's status also replies with the plain handle; the caller
+  polls `request_id` as usual.
 - When the call waited, the reply is the body that
   `GET /{job_id}/requests/{request_id}` returns
   ([section 6.8](#68-poll-request---get-job_idrequestsrequest_id)), plus
