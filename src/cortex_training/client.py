@@ -5444,7 +5444,10 @@ class CortexTrainingClient:
         wait, or the reply could not be read whole, and the caller polls
         ``request_id`` as usual. A generation that failed or was cancelled
         within the wait raises the error :meth:`poll_request` raises. ``0``
-        sends no wait and returns a handle with no result.
+        sends no wait and returns a handle with no result. Use a ``result``
+        that is set rather than polling again: like a second poll of any
+        generate, a re-poll leaves the tensors under ``results`` as tensors,
+        and the server may have dropped the result by then.
 
         A waiting submit is retried only on failures that come before any
         generation starts: connection failures, and HTTP 429, 404, 409, 307 or

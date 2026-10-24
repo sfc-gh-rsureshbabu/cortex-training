@@ -1259,7 +1259,9 @@ failed or was cancelled within the wait makes `generate()` raise the same error
 with no result. The client keeps no copy of the reply: the handle the caller
 holds is the only one. The server keeps a delivered result for about 60
 seconds after it last sent it, so a poll made right away (after a `None`
-result) still gets it, but a GET much later may not.
+result) still gets it, but a GET much later may not. When `result` is set,
+use it instead of polling again: as with a second poll of any generate, a
+re-poll returns the values under `results` as tensors, not lists.
 
 For a waiting call, the read timeout is raised to at least the capped wait plus
 45 seconds, so the server ends the call before the client gives up on it. The

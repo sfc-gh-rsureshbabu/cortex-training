@@ -3998,6 +3998,9 @@ class TestDataPlane:
         assert handle.result["results"][0]["text"] == "hi"
         assert handle.result["results"][0]["token_ids"] == [1, 2, 3]
         c._session.get.assert_not_called()
+        # Documented: once the handle has the result, a re-poll no longer restores lists.
+        c._session.get.return_value = _make_response(self._done_reply())
+        assert torch.is_tensor(c.poll_request("j1", "g1")["results"][0]["token_ids"])
 
     def test_generate_wait_result_matches_poll_request(self):
         waited = _make_client(post_json=self._done_reply())
