@@ -5390,6 +5390,17 @@ class CortexTrainingClient:
         wait_seconds: int,
     ) -> GenerateHandle: ...
 
+    @overload
+    def generate(
+        self,
+        job_id: str,
+        prompts: list[str | list[int]],
+        sampling_params: dict | list[dict | None] | None = None,
+        routing_key: str | list[str | None] | None = None,
+        strict: bool | None = None,
+        wait_seconds: int | None = None,
+    ) -> str | GenerateHandle: ...
+
     @_track_operation("generate")
     def generate(
         self,
