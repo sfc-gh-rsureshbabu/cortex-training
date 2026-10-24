@@ -1222,8 +1222,8 @@ POST /{job_id}/generate?wait_seconds=40
 - `wait_seconds` is a whole number of seconds from 0 to 2147483647. The server
   holds the call for at most 40 seconds, whatever the value, and may not wait
   at all. A negative, non-integer or larger value is rejected with HTTP 400
-  (the Python client raises `ValueError` before sending). On a request-chunked generate,
-  only the final chunk's POST carries it.
+  (the Python client raises `ValueError` before sending). On a
+  request-chunked generate, only the final chunk's POST carries it.
 - When the call did not wait (`wait_seconds` omitted or `0`, waiting not
   available, or a server that ignores the parameter), the reply is the plain
   handle `{"request_id", "job_id"}`.

@@ -753,7 +753,7 @@ def _metric_identity(
             attributes["request_id"] = result
         elif isinstance(result, dict) and result.get("request_id") is not None:
             attributes["request_id"] = result["request_id"]
-        elif getattr(result, "request_id", None) is not None:
+        elif isinstance(getattr(result, "request_id", None), str):
             # Set on a waited generate's handle, and on the error it raises when the generation failed.
             attributes["request_id"] = result.request_id
     return attributes

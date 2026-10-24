@@ -4025,11 +4025,15 @@ class TestDataPlane:
             "events": [{"type": "result", "result": bad_result}],
         }
 
-    def test_generate_wait_undecodable_reply_returns_a_handle_to_poll(self, monkeypatch):
+    def test_generate_wait_undecodable_reply_returns_a_handle_to_poll(self, monkeypatch, caplog):
         monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
         c = _make_client(post_json=self._undecodable_reply(), get_json=self._done_reply())
-        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        with caplog.at_level("WARNING", logger=nc.logger.name):
+            handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
         assert handle == nc.GenerateHandle("g1", None)
+        assert [
+            r.levelno for r in caplog.records if r.getMessage().startswith("waited generate g1 reply not decodable")
+        ] == [logging.WARNING]
         # The id is still known as a generate, so the poll restores tensor lists.
         assert c.poll_request("j1", "g1")["results"][0]["token_ids"] == [1, 2, 3]
 
