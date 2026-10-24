@@ -201,7 +201,9 @@ GET /{job_id}/requests/{request_id}
 backoff, DSSST1 result decoding, and cursor-addressed result chunks.
 
 A generate can also ask the server to hold the call until its result is ready,
-so a short generation needs no poll; see
+so a short generation needs no poll. Only a server with waiting enabled holds
+the call; any other answers right away with the plain handle, and the call
+keeps the narrower retries of a waiting generate all the same. See
 [Waiting for the result](#waiting-for-the-result-wait_seconds).
 
 ### 3.2 Job states
@@ -1213,7 +1215,9 @@ converts tensor values under `results` back to Python lists.
 #### Waiting for the result (`wait_seconds`)
 
 On server versions that support it, the generate call can wait for the result
-instead of returning at once:
+instead of returning at once. The wait happens only where the server has it
+enabled; otherwise the reply is the plain handle, sent at once, and the
+client still applies the waiting retry rule to the call.
 
 ```text
 POST /{job_id}/generate?wait_seconds=40
@@ -1255,7 +1259,9 @@ With `wait_seconds`, `generate()` returns a `GenerateHandle` instead of the bare
 is set only when the reply says the generation succeeded and carries the whole
 result (no `next_cursor`). Otherwise it is `None`: the generation was still
 running, the server did not wait, the result was chunked, or the reply could
-not be decoded, and the caller polls `request_id` as usual. A generation that
+not be decoded, and the caller polls `request_id` as usual. For a chunked
+result the chunks that came with the reply are not kept: `poll_request()`
+reads the whole result again, from the first chunk. A generation that
 failed or was cancelled within the wait makes `generate()` raise the same error
 `poll_request()` raises. `wait_seconds=0` sends no wait and returns a handle
 with no result. The client keeps no copy of the reply: the handle the caller

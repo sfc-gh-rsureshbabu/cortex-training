@@ -928,7 +928,8 @@ class GenerateHandle:
     """
 
     request_id: str
-    result: dict | None
+    # Left out of the hash, which would fail on a dict; equality still compares it.
+    result: dict | None = field(hash=False)
 
 
 class JobType(str, Enum):
@@ -5439,11 +5440,16 @@ class CortexTrainingClient:
 
         ``wait_seconds`` asks the server to hold the call for up to that many
         whole seconds and reply with the result if the generation ends in
-        time. The server caps the wait and may not support it. The handle's
-        ``result`` is then what :meth:`poll_request` would return; it is
-        ``None`` when the generation was still running, the server did not
-        wait, or the reply could not be read whole, and the caller polls
-        ``request_id`` as usual. A generation that failed or was cancelled
+        time. The server caps the wait, and holds the call only if it has
+        waiting enabled; if not, it answers right away with just the request
+        id, and the retry rule below still applies. A finished result in the
+        reply makes the handle's ``result`` what :meth:`poll_request` would
+        return; it is ``None`` when the generation was still running, the
+        server did not wait, or the reply could not be read whole, and the
+        caller polls ``request_id`` as usual. A chunked result counts as not
+        whole: the chunks that came with the reply are dropped, and
+        :meth:`poll_request` fetches them all again starting with the first.
+        A generation that failed or was cancelled
         within the wait raises the error :meth:`poll_request` raises. ``0``
         sends no wait and returns a handle with no result. Use a ``result``
         that is set rather than polling again: like a second poll of any
@@ -5498,9 +5504,8 @@ class CortexTrainingClient:
         if state not in _SUCCEEDED_REQUEST_STATES or (isinstance(next_cursor, str) and next_cursor):
             return None
         try:
-            with _server_payload():
-                status = self._decode_stream_result_events(response)
-                chunks = [self._decode_result_chunk_event(event) for event in status.get("events") or []]
+            status = self._decode_stream_result_events(response)
+            chunks = [self._decode_result_chunk_event(event) for event in status.get("events") or []]
             return self._finished_request_result(
                 request_id, status, state, [chunk for chunk in chunks if chunk is not None], None
             )

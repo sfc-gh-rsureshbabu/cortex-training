@@ -3933,6 +3933,7 @@ class TestDataPlane:
         monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
         c = _make_client()
         c.max_retries = 3
+        c.request_timeout = (5.0, 10.0)
         c._MAX_GENERATE_BYTES = 64 * 1024
         c._session.post.side_effect = [
             # An earlier chunk starts nothing, so it keeps the normal retry.
@@ -3944,7 +3945,26 @@ class TestDataPlane:
         assert c._session.post.call_count == 3
         first, _, last = c._session.post.call_args_list
         assert "params" not in first.kwargs
+        assert "timeout" not in first.kwargs
         assert last.kwargs["params"] == {"wait_seconds": 40}
+        assert last.kwargs["timeout"] == (5.0, 85.0)
+
+    def test_generate_wait_final_chunk_uses_the_waiting_retry_rule(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(nc, "wait_exponential_jitter", lambda **_kwargs: wait_none())
+        c = _make_client()
+        c.max_retries = 3
+        c._MAX_GENERATE_BYTES = 64 * 1024
+        c._session.post.side_effect = [
+            _make_response({"chunk_cached": True}),
+            # The final POST may have started the generation, so a 504 is not retried.
+            _make_error_response({"message": "gateway timeout"}, status_code=504),
+            _make_response({"request_id": "g4"}),
+        ]
+        with pytest.raises(nc.requests.exceptions.HTTPError):
+            c.generate("j1", prompts=["x" * (70 * 1024)], wait_seconds=40)
+        assert c._session.post.call_count == 2
 
     def test_generate_wait_plain_handle_reply_polls(self, monkeypatch):
         monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
@@ -4015,6 +4035,13 @@ class TestDataPlane:
         handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
         with pytest.raises(dataclasses.FrozenInstanceError):
             handle.result = None
+
+    def test_generate_wait_handle_with_a_result_is_hashable(self):
+        result = {"results": [{"text": "done"}]}
+        a = nc.GenerateHandle("g1", result)
+        b = nc.GenerateHandle("g1", dict(result))
+        assert a == b and hash(a) == hash(b)
+        assert len({a, b}) == 1
 
     @staticmethod
     def _undecodable_reply():
