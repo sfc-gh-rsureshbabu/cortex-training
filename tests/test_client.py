@@ -3824,8 +3824,9 @@ class TestDataPlane:
             _make_error_response({"message": "gateway timeout"}, status_code=504),
             nc.requests.exceptions.ReadTimeout("no reply"),
             nc.requests.exceptions.ConnectionError("connection reset by peer"),
+            nc.requests.exceptions.SSLError("tls handshake failed"),
         ],
-        ids=["500", "502", "503", "504", "read-timeout", "reset"],
+        ids=["500", "502", "503", "504", "read-timeout", "reset", "tls"],
     )
     def test_generate_wait_is_not_retried_once_it_may_have_started(self, monkeypatch, failure):
         from tenacity import wait_none

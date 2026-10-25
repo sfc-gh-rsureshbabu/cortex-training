@@ -301,7 +301,8 @@ job-not-found 404 exception above still applies, and a chunk-group 409
 a reset after the request was sent is raised instead, because the server may already be
 generating and a resend would run the generation twice. That includes 503 and
 504: a gateway can return them after the backend already accepted the call. A
-generate without `wait_seconds` keeps the retries above. See
+generate whose `wait_seconds` is `None` or `0` sends no wait and keeps the
+retries above. See
 [Waiting for the result](#waiting-for-the-result-wait_seconds).
 
 ### 3.6 Errors
@@ -1257,8 +1258,9 @@ if result is None:
     result = client.poll_request(job_id, handle.request_id)
 ```
 
-With `wait_seconds`, `generate()` returns a `GenerateHandle` instead of the bare
-`request_id`. Its `result` is the same value `poll_request()` would return, and
+When `wait_seconds` is not `None` (`0` included), `generate()` returns a
+`GenerateHandle`; with the default `None` it returns the bare `request_id`
+string. Its `result` is the same value `poll_request()` would return, and
 is set only when the reply says the generation succeeded and carries the whole
 result (no `next_cursor`). Otherwise it is `None`: the generation was still
 running, the server did not wait, the result was chunked, or the reply could
