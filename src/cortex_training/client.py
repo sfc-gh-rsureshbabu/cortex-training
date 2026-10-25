@@ -245,11 +245,6 @@ _DATABASE_NOT_RESOLVED_CODE = "517602"
 _SUCCEEDED_REQUEST_STATES = frozenset({"completed", "done", "succeeded"})
 _FAILED_REQUEST_STATES = frozenset({"failed", "cancelled", "canceled"})
 _TERMINAL_REQUEST_STATES = _SUCCEEDED_REQUEST_STATES | _FAILED_REQUEST_STATES
-# Longest wait the service grants a generate, whatever wait_seconds asks for.
-_MAX_GENERATE_WAIT_SECONDS = 40
-# The service answers a waiting call within 30 s after the wait ends; 45 s
-# leaves 15 s on top, so the reply arrives before the read timeout fires.
-_GENERATE_WAIT_READ_MARGIN_SECONDS = 45.0
 _CHUNK_GROUP_RESTART_REQUIRED = "chunk_group_restart_required"
 _CHUNK_GROUP_ERROR_CODES = {
     _CHUNK_GROUP_RESTART_REQUIRED,
@@ -5476,10 +5471,8 @@ class CortexTrainingClient:
         if wait_seconds:
             wait_kwargs = {
                 "final_params": {"wait_seconds": wait_seconds},
-                "final_read_timeout": max(
-                    self.request_timeout[1],
-                    min(wait_seconds, _MAX_GENERATE_WAIT_SECONDS) + _GENERATE_WAIT_READ_MARGIN_SECONDS,
-                ),
+                # The caller's read timeout counts from the end of the wait.
+                "final_read_timeout": self.request_timeout[1] + wait_seconds,
                 "final_retry_on": _is_waiting_generate_retryable,
             }
         response = self._post_octet_request_chunks(

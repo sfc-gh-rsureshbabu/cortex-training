@@ -1276,8 +1276,8 @@ result) still gets it, but a GET much later may not. When `result` is set,
 use it instead of polling again: as with a second poll of any generate, a
 re-poll returns the values under `results` as tensors, not lists.
 
-For a waiting call, the read timeout is raised to at least the capped wait plus
-45 seconds, so the server ends the call before the client gives up on it. The
+For a waiting call, the read timeout is the client's read timeout plus
+`wait_seconds`, so the usual read timeout starts when the wait ends. The
 call is retried only on failures that come before the generation starts; see
 [section 3.5](#35-retries).
 

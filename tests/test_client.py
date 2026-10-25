@@ -3789,11 +3789,14 @@ class TestDataPlane:
         c = _make_client(post_json=self._done_reply())
         assert c.generate("j1", prompts=["hello"], wait_seconds=0) == nc.GenerateHandle("g1", None)
 
-    @pytest.mark.parametrize("wait_seconds", [40, 3600, 2**31])
-    def test_generate_wait_read_timeout_outlasts_the_capped_wait(self, wait_seconds):
+    @pytest.mark.parametrize(
+        ("read_timeout", "wait_seconds"),
+        [(10.0, 40), (30.0, 2), (10.0, 3600), (10.0, 2**31)],
+    )
+    def test_generate_wait_read_timeout_starts_after_the_wait(self, read_timeout, wait_seconds):
         c = CortexTrainingClient(
             base_url="http://test.local", database="DB", schema="SCH",
-            request_timeout=(5.0, 10.0),
+            request_timeout=(5.0, read_timeout),
         )
         c._session = MagicMock()
         c._session.post.return_value = _make_response({"request_id": "g1"})
@@ -3801,12 +3804,12 @@ class TestDataPlane:
         kwargs = c._session.post.call_args.kwargs
         # Sent as given; the server applies its own 40 s cap.
         assert kwargs["params"] == {"wait_seconds": wait_seconds}
-        assert kwargs["timeout"] == (5.0, 85.0)
+        assert kwargs["timeout"] == (5.0, read_timeout + wait_seconds)
 
-    def test_generate_wait_keeps_a_longer_configured_read_timeout(self):
+    def test_generate_wait_adds_the_wait_to_the_default_read_timeout(self):
         c = _make_client(post_json={"request_id": "g1"})
         c.generate("j1", prompts=["hello"], wait_seconds=40)
-        assert c._session.post.call_args.kwargs["timeout"] == (30.0, 600.0)
+        assert c._session.post.call_args.kwargs["timeout"] == (30.0, 640.0)
 
     @pytest.mark.parametrize("wait_seconds", [-1, 1.5, True, "40"])
     def test_generate_rejects_a_bad_wait(self, wait_seconds):
@@ -3948,7 +3951,7 @@ class TestDataPlane:
         assert "params" not in first.kwargs
         assert "timeout" not in first.kwargs
         assert last.kwargs["params"] == {"wait_seconds": 40}
-        assert last.kwargs["timeout"] == (5.0, 85.0)
+        assert last.kwargs["timeout"] == (5.0, 50.0)
 
     def test_generate_wait_final_chunk_uses_the_waiting_retry_rule(self, monkeypatch):
         from tenacity import wait_none
