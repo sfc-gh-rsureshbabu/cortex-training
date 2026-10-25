@@ -4071,6 +4071,24 @@ class TestDataPlane:
         # The id is still known as a generate, so the poll restores tensor lists.
         assert c.poll_request("j1", "g1")["results"][0]["token_ids"] == [1, 2, 3]
 
+    def test_generate_wait_late_decode_error_keeps_the_id_a_generate(self, monkeypatch):
+        monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+        c = _make_client(post_json=self._done_reply(), get_json=self._done_reply())
+        log_result = c._log_training_result
+        calls = []
+
+        # Fails once, after the result was normalized and the id discarded.
+        def fail_first(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                raise RuntimeError("log failed")
+            return log_result(*args, **kwargs)
+
+        monkeypatch.setattr(c, "_log_training_result", fail_first)
+        handle = c.generate("j1", prompts=["hello"], wait_seconds=40)
+        assert handle == nc.GenerateHandle("g1", None)
+        assert c.poll_request("j1", "g1")["results"][0]["token_ids"] == [1, 2, 3]
+
     def test_generate_wait_unexpected_decode_error_still_returns_a_handle(self, monkeypatch, caplog):
         from cortex_training import wire
 
