@@ -1370,8 +1370,8 @@ shows the training tabs until its record says it is a deployment.
 - **Serving** (deployments) reads the `drain_metrics` lines the deployment writes
   to its console every 30 seconds, from its saved console (downloaded resumed, so a
   refresh fetches only new chunks; about a minute behind live). The header says
-  `starting`, `starting (no metrics yet)`, `serving`, `status unknown` or `ended`
-  (`running` while a first read finds no drain yet), the replica count, how long
+  `starting`, `starting (no metrics yet)`, `serving`, `status unknown`, `dropping`
+  or `ended` (`running` while a first read finds no drain yet), the replica count, how long
   ago the last drain was, how long the deployment took to start, and the
   download's warnings (skipped chunks, say). The table has one row per drain, newest first: requests per second, requests,
   latency and time-to-first-token p50/p99, queue p99, running and waiting

@@ -178,6 +178,7 @@ def test_serving_state():
     assert serving.serving_state({"status": "RUNNING"}, none) == "starting (no metrics yet)"
     assert serving.serving_state({"status": "RUNNING"}, some) == "serving"
     assert serving.serving_state({"status": "CANCELLED"}, some) == "ended"
+    assert serving.serving_state({"status": "CANCELLING"}, some) == "dropping"  # its badge says DROPPING
     # UNKNOWN is live but not known to run: its drains say it serves, and nothing else says it starts.
     assert serving.serving_state({"status": "UNKNOWN"}, some) == "serving"
     assert serving.serving_state({"status": "UNKNOWN"}, none) == "status unknown"

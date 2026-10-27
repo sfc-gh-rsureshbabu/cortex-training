@@ -343,7 +343,7 @@ def deployment_sub_job_id(job: Any) -> Optional[str]:
 def status_word_for(job: Any, status: Any) -> str:
     """``status`` (the job's, or one of its sub-jobs') as the screens word it: a
     deployment's in the CLI's deployment words (``RUNNING`` -> ``ready``)."""
-    if is_deployment(job):
+    if is_deployment(job) and status_word(status) != "?":  # the CLI reads no status as its UNKNOWN
         return _model_deployment_status({"status": status}).lower()
     return status_word(status)
 

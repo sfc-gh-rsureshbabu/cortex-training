@@ -166,9 +166,9 @@ def rate(prev: Optional[Drain], cur: Drain) -> Optional[float]:
 def serving_state(job: dict, data: ServingData, *, reading: bool = False) -> str:
     """Where a deployment stands, from its status and whether it has drained yet. ``reading``: its
     console is still being read, so no drain yet says nothing."""
-    if not views.is_live(job):
-        return "ended"
     word = views.status_word(job.get("status"))
+    if not views.is_live(job):
+        return "dropping" if word == "cancelling" else "ended"
     if word == "unknown":
         return "serving" if data.drains else "status unknown"
     if word != "running":

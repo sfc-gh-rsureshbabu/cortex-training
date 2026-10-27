@@ -69,7 +69,9 @@ def test_a_deployment_s_status_reads_in_deployment_words():
     assert v.status_word_for(_deployment(), "RUNNING") == "ready"
     assert v.status_word_for(_deployment(), "JOB_STATE_PLACING") == "initializing"
     assert v.status_word_for(_deployment(), "CANCELLED") == "dropped"
-    assert v.status_word_for(_deployment(), "") == "unknown"
+    # No status yet is not the service's UNKNOWN.
+    assert v.status_word_for(_deployment(), "") == "?" and v.status_word_for(_deployment(), None) == "?"
+    assert v.status_word_for(_deployment(), "UNKNOWN") == "unknown"
     assert v.status_word_for(_training(), "RUNNING") == "running"
     assert v.status_word_for(_training(), "") == "?"
 
