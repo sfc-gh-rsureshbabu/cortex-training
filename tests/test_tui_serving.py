@@ -87,6 +87,31 @@ def test_a_rewritten_file_is_read_again_from_its_start(tmp_path):
     assert [d.completed for d in reader.read().drains] == [9]
 
 
+def test_a_console_rebuilt_in_place_is_read_again_from_its_start(tmp_path):
+    # A late chunk makes the client rebuild the console and os.replace it, usually larger.
+    path = tmp_path / "stdout.log"
+    path.write_text(_drain(100.0, 1) + "\n" + _drain(160.0, 3) + "\n")
+    reader = serving.ConsoleReader(path)
+    reader.read()
+    rebuilt = tmp_path / "stdout.log.partial"
+    rebuilt.write_text("".join(_drain(t, n) + "\n" for t, n in ((100.0, 1), (130.0, 2), (160.0, 3), (190.0, 4))))
+    rebuilt.replace(path)
+    drains = reader.read().drains
+    assert [(d.drained_at, d.completed) for d in drains] == [(100.0, 1), (130.0, 2), (160.0, 3), (190.0, 4)]
+    assert sum(d.completed for d in drains) == 10
+
+
+def test_bytes_past_the_committed_size_wait_for_the_next_read(tmp_path, monkeypatch):
+    path = tmp_path / "stdout.log"
+    first = _drain(0.0, 1) + "\n"
+    path.write_text(first + _drain(30.0, 2) + "\n")
+    monkeypatch.setattr(serving, "committed_size", lambda p, size: len(first))
+    reader = serving.ConsoleReader(path)
+    assert [d.completed for d in reader.read().drains] == [1]
+    monkeypatch.setattr(serving, "committed_size", lambda p, size: size)
+    assert [d.completed for d in reader.read().drains] == [1, 2]
+
+
 def test_serving_state():
     none, some = serving.ServingData(), serving.ServingData([serving.parse_line(_drain(0.0, 1))])
     assert serving.serving_state({"status": "PLACING"}, none) == "starting"

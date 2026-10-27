@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from dataclasses import field
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 from typing import Optional
 
 from cortex_training.tui import views
+from cortex_training.tui.saved_log import committed_size
 
 # Cheap substring checks before json.loads: most console lines are neither.
 _DRAIN_MARK = '"drain_metrics"'
@@ -99,24 +101,31 @@ def _startup(line: str) -> Optional[float]:
 
 
 class ConsoleReader:
-    """A saved console (``stdout.log``) that a resumed download only appends to: each read parses
-    the whole lines added since the last one, so a deployment's days of console are parsed once."""
+    """A saved console (``stdout.log``) that a resumed download mostly appends to: each read parses
+    the whole lines added since the last one, so a deployment's days of console are parsed once.
+    A console that was rebuilt or rewritten is read again from its start."""
 
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
         self._offset = 0
+        self._file: Optional[tuple] = None  # (st_dev, st_ino) the offset belongs to
         self._data = ServingData()
 
     def read(self) -> ServingData:
         try:
-            size = self._path.stat().st_size
+            f = self._path.open("rb")
         except FileNotFoundError:
             return self._copy()
-        if size < self._offset:  # rewritten, not appended to: start again
-            self._offset, self._data = 0, ServingData()
-        with self._path.open("rb") as f:
+        with f:
+            st = os.fstat(f.fileno())
+            # Bytes past the resume manifest may be truncated by the next resume.
+            size = committed_size(self._path, st.st_size)
+            # A late chunk makes the client rebuild the console and os.replace it: a new inode.
+            if size < self._offset or (st.st_dev, st.st_ino) != self._file:
+                self._offset, self._data = 0, ServingData()
+            self._file = (st.st_dev, st.st_ino)
             f.seek(self._offset)
-            chunk = f.read()
+            chunk = f.read(size - self._offset)
         end = chunk.rfind(b"\n") + 1  # a line cut short waits for the rest of it
         added = False
         for raw in chunk[:end].splitlines():
