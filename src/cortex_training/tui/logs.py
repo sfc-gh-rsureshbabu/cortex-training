@@ -480,21 +480,24 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
                 tabs.hide_tab(tab)
         self.refresh_bindings()
 
-    def _download_serving_console(self, *, sub_job_id, cancelled) -> bool:
+    def _download_serving_console(self, *, sub_job_id, cancelled) -> list | None:
         """Worker thread. The Serving tab's download: the deployment's console, resumed, in a directory
         and DownloadLock of its own. The Logs tab's saved console is kept or dropped by rules of its own
-        (_keep_console), so the two don't share files."""
+        (_keep_console), so the two don't share files. Returns the download's warnings, or None when it
+        didn't run."""
         lock = DownloadLock(self._serving_root)
         if not lock.acquire(lambda: self._screen_open and not cancelled()):
-            return False
+            return None
         before = telemetry_bytes(self._serving_root)
         try:
-            self._client.download_stdout_logs(self._job_id, self._serving_root, resume=True, sub_job_ids=[sub_job_id],
-                                              **_quiet_download(self._client.download_stdout_logs))
+            results = self._client.download_stdout_logs(
+                self._job_id, self._serving_root, resume=True, sub_job_ids=[sub_job_id],
+                **_quiet_download(self._client.download_stdout_logs))
         finally:
             lock.release()
         self._after_telemetry_download(before, self._serving_root)
-        return True
+        warnings = _result_warnings(results, kind="stdout", job_id=self._job_id, output_dir=self._serving_root)
+        return warnings.get(sub_job_id, [])
 
     def action_show_tab(self, tab: str) -> None:
         self.query_one("#job-tabs", TabbedContent).active = tab

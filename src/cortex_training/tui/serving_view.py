@@ -24,7 +24,9 @@ from cortex_training.tui import serving
 from cortex_training.tui import theme
 from cortex_training.tui import views
 from cortex_training.tui.detail_tabs import _Pane
+from cortex_training.tui.format import safe_text
 from cortex_training.tui.format import short_seconds
+from cortex_training.tui.widgets import _warning_text
 
 _MAX_ROWS = 240  # two hours of drains
 
@@ -48,12 +50,13 @@ class ServingPane(_Pane):
     BINDINGS = [Binding("r", "refresh", "Refresh")]
 
     def __init__(self, client, job_id: str, root: Path, *, job: Callable[[], dict],
-                 download: Callable[..., bool], id: str = "serving-tab") -> None:
+                 download: Callable[..., list | None], id: str = "serving-tab") -> None:
         super().__init__(client, job_id, job=job, id=id)
         self._root = Path(root)
         self._download = download
         self._reader: serving.ConsoleReader | None = None
         self._data = serving.ServingData()
+        self._warnings: list = []  # the last download's, shown in the header
         self._reload_pending = False  # asked for while a load ran: one more once it finishes
 
     def compose(self) -> ComposeResult:
@@ -85,9 +88,10 @@ class ServingPane(_Pane):
             if self._reader is None:
                 self._reader = serving.ConsoleReader(self._root / sid / "stdout.log")
             self._post(self._accept, self._reader.read())  # what is cached, while the download runs
-            if not self._download(sub_job_id=sid, cancelled=lambda: worker.is_cancelled) or worker.is_cancelled:
+            warnings = self._download(sub_job_id=sid, cancelled=lambda: worker.is_cancelled)
+            if warnings is None or worker.is_cancelled:
                 return
-            self._post(self._accept, self._reader.read())
+            self._post(self._accept, self._reader.read(), warnings)
             self._post(self._finish, None)
         except NoChunksError:  # nothing uploaded yet: a deployment that just started
             self._post(self._finish, None)
@@ -98,8 +102,10 @@ class ServingPane(_Pane):
             if worker.is_cancelled:
                 self._post(self._cancelled)
 
-    def _accept(self, data: serving.ServingData) -> None:
+    def _accept(self, data: serving.ServingData, warnings: list | None = None) -> None:
         self._data = data
+        if warnings is not None:
+            self._warnings = warnings
         self.redraw()
 
     def _finish(self, error: str | None) -> None:
@@ -135,6 +141,8 @@ class ServingPane(_Pane):
             text.append(f"  ·  started in {views.fmt_duration(data.startup_s)}", style=theme.MUTED)
         if self._loading:
             text.append("  ·  loading…", style=theme.MUTED)
+        if self._warnings:
+            text.append("\n" + " ".join(safe_text(_warning_text(self._warnings)).split()), style=theme.WARN)
         if self._error:
             text.append(f"\n[error] {self._error}  (r retries)", style=theme.ERR)
         return text

@@ -115,7 +115,7 @@ def test_bytes_past_the_committed_size_wait_for_the_next_read(tmp_path, monkeypa
 def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     from cortex_training.tui.serving_view import ServingPane
 
-    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: True)
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: [])
     pane._data = serving.ServingData([serving.parse_line(_drain(1e20, 2))])
     assert "last drain" not in str(pane._status_text())
     table = pane._table()
@@ -276,6 +276,30 @@ def test_no_console_yet_is_not_an_error_and_a_failure_says_so():
             c.download_stdout_logs.side_effect = RuntimeError("boom")
             await pilot.press("r")
             assert await _wait(pilot, lambda: "boom" in _text(screen, "#serving-status"))
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_download_s_warning_shows_in_the_serving_header():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+    saved = c.download_stdout_logs.side_effect
+
+    def download(job_id, output_dir, **kwargs):
+        rows = saved(job_id, output_dir, **kwargs)
+        return [{**rows[0], "warnings": ["skipped 2 chunks that failed to download"]}]
+
+    c.download_stdout_logs.side_effect = download
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: c.download_stdout_logs.called and not pane._loading)
+            assert "warning: skipped 2 chunks" in _text(screen, "#serving-status")
             await _settle(app, pilot)
 
     asyncio.run(run())
