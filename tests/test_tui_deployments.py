@@ -10,6 +10,19 @@ from datetime import timezone
 
 from cortex_training.tui import views as v
 
+import asyncio
+from unittest.mock import MagicMock
+
+import pytest
+
+pytest.importorskip("textual")
+
+from textual.widgets import Static  # noqa: E402
+
+from cortex_training import AccountJobListUnavailable  # noqa: E402
+from cortex_training.tui.app import CortexTrainingLogTUI  # noqa: E402
+from cortex_training.tui.job_list import JobListScreen  # noqa: E402
+
 NOW = datetime(2026, 10, 26, 18, 0, tzinfo=timezone.utc)
 UUID = "00000000-0000-4000-8000-000000000008"  # a made-up canonical UUID
 DEPLOY = "8:sampling:0"
@@ -87,3 +100,110 @@ def test_base_url_comes_from_the_client():
 
     assert v.base_url(Client()) == Client.model_deployment_base_url
     assert v.base_url(object()) == ""
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("CORTEX_TRAINING_TUI_CACHE_DIR", str(tmp_path / "cache"))
+    import cortex_training.tui.widgets as widgets_module
+
+    monkeypatch.setattr(widgets_module, "_ERROR_LOG", str(tmp_path / "errors.log"))
+
+
+def _client(jobs, job=None):
+    c = MagicMock()
+    c.list_jobs_page.side_effect = AccountJobListUnavailable("not deployed", reason="not_deployed")
+    c.list_jobs.return_value = jobs
+    c.get_job.return_value = job if job is not None else jobs[0]
+    c.tail_logs.return_value = {"entries": [], "next_cursor": "", "eof": True}
+    return c
+
+
+async def _wait(pilot, predicate, tries=200):
+    for _ in range(tries):
+        await pilot.pause(0.01)
+        if predicate():
+            return True
+    return False
+
+
+async def _settle(app, pilot):
+    app.workers.cancel_all()
+    for _ in range(5):
+        await pilot.pause()
+
+
+def _ids(screen) -> set:
+    return {screen._jobs_by_key[key]["job_id"] for key in screen._job_by_item.values()}
+
+
+def _info(screen) -> str:
+    return str(screen.query_one("#listinfo", Static).render())
+
+
+def test_d_switches_between_jobs_and_deployments():
+    c = _client([_training(), _sampling(), _deployment(job_id="8"), _deployment(job_id="10")])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            assert _ids(screen) == {"7", "9"}  # opens on Jobs
+            assert "2 deployments · d shows them" in _info(screen)
+            await pilot.press("d")
+            assert await _wait(pilot, lambda: _ids(screen) == {"8", "10"})
+            assert "2 jobs · d shows them" in _info(screen)
+            assert "deployments" in app.sub_title
+            await pilot.press("d")
+            assert await _wait(pilot, lambda: _ids(screen) == {"7", "9"})
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_an_empty_view_points_to_the_other_one():
+    c = _client([_deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._nomatch)
+            assert "d shows the 1 deployment" in app.screen._nomatch
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_search_covers_only_the_view_on_screen():
+    c = _client([_training(), _deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            await pilot.press("d")
+            assert await _wait(pilot, lambda: _ids(screen) == {"8"})
+            await pilot.press("/", *"class:evaluation", "enter")
+            assert await _wait(pilot, lambda: _ids(screen) == {"8"} and screen._filter == "class:evaluation")
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_deployment_s_row_shows_its_deployment_status():
+    c = _client([_training(), _deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            cells = screen._job_cells(_training(), NOW)[0]
+            assert "RUNNING" in str(cells["Status"])
+            cells = screen._job_cells(_deployment(), NOW)[0]
+            assert "READY" in str(cells["Status"]) and "RUNNING" not in str(cells["Status"])
+            await _settle(app, pilot)
+
+    asyncio.run(run())

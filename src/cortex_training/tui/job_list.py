@@ -305,6 +305,8 @@ class JobListScreen(FollowsPointer, Screen):
         Binding("a", "show_list('schema')", "Current schema"),
         Binding("f", "full_list('all')", "All jobs"),
         Binding("f", "full_list('newest')", "Newest 2,000"),
+        Binding("d", "show_view('deployments')", "Deployments"),
+        Binding("d", "show_view('jobs')", "Jobs"),
         ("s", "cycle_sort", "Sort"),
         ("o", "toggle_order", "Order"),
         ("e", "expand_all", "Expand/collapse all"),
@@ -344,6 +346,7 @@ class JobListScreen(FollowsPointer, Screen):
         # asked for every job of it: kept across refreshes, until another list is shown.
         self._cut_listing: Listing | None = None
         self._full_list = False
+        self._deployments = False  # d: the Deployments view, else training and sampling jobs
         self._filter = ""
         self._sort = "created"
         self._descending = True
@@ -435,7 +438,7 @@ class JobListScreen(FollowsPointer, Screen):
         self._paint_notice()
         self._paint_nomatch()
         self._paint_help()
-        if self._layout != self._layout_for(self._location_column_width(self._recent())):
+        if self._layout != self._layout_for(self._location_column_width(self._in_view(self._recent()))):
             self._render_jobs()
 
     def on_descendant_focus(self, event) -> None:
@@ -508,6 +511,14 @@ class JobListScreen(FollowsPointer, Screen):
         now = self._clock()
         return [j for j in self._all_jobs if views.within_retention(j, now)]
 
+    def _in_view(self, jobs: list) -> list:
+        """The jobs of the view on screen: deployments (d) or every other job."""
+        return [job for job in jobs if views.is_deployment(job) == self._deployments]
+
+    def _other_view_text(self, count: int) -> str:
+        noun = "job" if self._deployments else "deployment"
+        return f"{count:,} {noun}{'' if count == 1 else 's'} · d shows {'it' if count == 1 else 'them'}"
+
     def _location_column_width(self, jobs: list) -> int:
         """The Schema column's width for ``jobs``; 0 (hidden) when they all share one location.
 
@@ -541,7 +552,8 @@ class JobListScreen(FollowsPointer, Screen):
         if self._scope is not None and self._scope.loading:
             # The list's first pages: how far it is, in place of when it was refreshed.
             # Only the account-wide list names itself here; the schema's own text already does.
-            bits = ("all schemas" if self._scope.kind == ACCOUNT else "", self._scope_text())
+            bits = ("deployments" if self._deployments else "", "all schemas" if self._scope.kind == ACCOUNT else "",
+                    self._scope_text())
             self.app.sub_title = "  ·  ".join(bit for bit in bits if bit)
             return
         if self._refreshing:
@@ -558,7 +570,7 @@ class JobListScreen(FollowsPointer, Screen):
                 refresh_status += f" (list from {self._last_refreshed[:5]})"
         else:
             refresh_status = f"last refreshed {self._last_refreshed or '—'}"
-        bits = [refresh_status, self._scope_text()]
+        bits = ["deployments" if self._deployments else "", refresh_status, self._scope_text()]
         self.app.sub_title = "  ·  ".join(bit for bit in bits if bit)
 
     def _switching_text(self) -> str:
@@ -678,6 +690,16 @@ class JobListScreen(FollowsPointer, Screen):
         # the header says so now.
         self._update_subtitle()
 
+    def action_show_view(self, which: str) -> None:
+        """``d``: show the deployments (``which`` "deployments") or every other job ("jobs")."""
+        deployments = which == "deployments"
+        if deployments == self._deployments:
+            return
+        self._deployments = deployments
+        self.refresh_bindings()  # the footer's d names the other view now
+        self._render_jobs(top=True)
+        self._update_subtitle()
+
     def _refresh_tick(self) -> None:
         if self.app.screen is self:
             self._refresh_jobs()
@@ -703,6 +725,9 @@ class JobListScreen(FollowsPointer, Screen):
             # Only a list cut short with every job at hand has them to show; of f's two
             # bindings, the one for the other way.
             return self._cut_listing is not None and (parameters[:1] == ("all",)) != self._full_list
+        if action == "show_view":
+            # One of d's two bindings, the one for the other view.
+            return (parameters[:1] == ("deployments",)) != self._deployments
         return True
 
     def action_filter(self) -> None:
@@ -1155,12 +1180,13 @@ class JobListScreen(FollowsPointer, Screen):
         return _cell(f"role {role}", theme.MUTED) if role else _cell("—", theme.FAINT)
 
     @staticmethod
-    def _status_cell(status, *, glyph_only: bool = False) -> _FixedCell:
+    def _status_cell(status, *, glyph_only: bool = False, word: str | None = None) -> _FixedCell:
         """``● RUNNING``: the theme's glyph and word, in the status's color, as every screen
         draws a status (``glyph_only``: the glyph alone, for a sub-job in its job's status).
-        Copied as the word alone, also where only the glyph is drawn."""
+        Copied as the word alone, also where only the glyph is drawn. ``word`` overrides the
+        status's own word (a deployment's, e.g. ``READY``); the color still comes from ``status``."""
         look = theme.status_look(status)
-        word = views.status_word(status).upper()
+        word = (word if word is not None else views.status_word(status)).upper()
         if glyph_only:
             return _CopiedCell(_cell(look.glyph, look.color), word)
         return _CopiedCell(_FixedCell.assemble((f"{look.glyph} ", look.color), (word, look.style)), word)
@@ -1179,7 +1205,7 @@ class JobListScreen(FollowsPointer, Screen):
         span, span_lasts = self._span_cell(job, now)
         # Plain text throughout: DataTable parses a str cell as markup.
         cells = {
-            "Status": self._status_cell(job.get("status")),
+            "Status": self._status_cell(job.get("status"), word=views.status_word_for(job, job.get("status"))),
             "Type": _cell(views.job_type_label(job)),
             "Created": created,
             "Duration": span,
@@ -1222,7 +1248,8 @@ class JobListScreen(FollowsPointer, Screen):
         return {
             "Job ID": _FixedCell.assemble(("  ", ""), (f"{'└' if last else '├'} ", theme.FAINT),
                                           (views.sub_job_label(sj), theme.MUTED)),
-            "Status": cls._status_cell(status, glyph_only=same) if told else _BLANK,
+            "Status": cls._status_cell(status, glyph_only=same, word=views.status_word_for(job, status)) if told
+            else _BLANK,
             "Model": _cell(model, theme.FAINT) if shown else _BLANK,
             "GPUs": _cell(gpus, theme.FAINT) if gpus_told else _BLANK,
         }
@@ -1388,6 +1415,7 @@ class JobListScreen(FollowsPointer, Screen):
         now = self._clock()
         home = self._clients.home
         found = [job for job in self._all_jobs if not views.within_retention(job, now)
+                 and views.is_deployment(job) == self._deployments
                  and views.job_matches_query(job, query, home=home, hay=self._haystack(job))]
         return [views.job_id_of(j) for j in views.sort_job_list(found, "created", True)]
 
@@ -1424,7 +1452,8 @@ class JobListScreen(FollowsPointer, Screen):
                     anchor = (key, table.cursor_row - round(table.scroll_y), table.scroll_x)
                 if str(key).startswith("hdr-"):
                     keep_header = key  # so does a LIVE/HISTORY row, while the list grows
-        recent = self._recent()
+        everyone = self._recent()
+        recent = self._in_view(everyone)
         layout = self._layout_for(self._location_column_width(recent))
         self._show_notice()
         info_line.set_class(False, "error")
@@ -1440,7 +1469,8 @@ class JobListScreen(FollowsPointer, Screen):
             info_line.update(Text(f"[error] {self._list_error}  (r retries{hint})", style=theme.ERR))
             self._hide_table(table, layout, "")  # an empty message keeps the search box at the bottom
             return
-        hidden = len(self._all_jobs) - len(recent)
+        hidden = len(self._all_jobs) - len(everyone)
+        others = len(everyone) - len(recent)  # the other view's, so nothing looks lost
         query = self._query()
         home = self._clients.home
         if query.empty and not query.errors:
@@ -1461,6 +1491,8 @@ class JobListScreen(FollowsPointer, Screen):
         live_so_far = active_so_far or older
         left = [_status_chips(live, len(history), live_so_far=active_so_far, unknown_so_far=older,
                               history_so_far=older)]
+        if others:
+            left.append(Content.styled(self._other_view_text(others), theme.MUTED))
         if self._filter:
             # The count before the query: a long query wraps, the count stays in view.
             # The search text is shown literally (assembled, never parsed as markup).
@@ -1485,6 +1517,11 @@ class JobListScreen(FollowsPointer, Screen):
                              location=self._schema_label() if one else "", widen=widen, narrow=narrow,
                              everything=everything)
                 message = views.no_match_message(self._filter, query, len(recent), **found)
+            elif others:
+                what = "deployments" if self._deployments else "training or sampling jobs"
+                other = "job" if self._deployments else "deployment"
+                message = (f"No {what} created in the last 6 months.\n"
+                           f"  d shows the {others:,} {other}{'' if others == 1 else 's'}.")
             elif self._scope is not None and self._scope.truncated:
                 message = empty_text(self._scope)
             elif self._scope is not None and self._scope.kind == ACCOUNT:
