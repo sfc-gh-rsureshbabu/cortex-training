@@ -953,6 +953,15 @@ account-level list scoped to that one schema
 so it comes a page at a time; where that route is unavailable for the account,
 fails, or answers with no job at all, it reads `list_jobs`, which answers in one
 call and shows no pages.
+
+The list has two views of the same jobs: **Jobs** (training and sampling, where
+`ct tui` opens) and **Deployments** (the jobs `ct` lists as model deployments; see
+[Model Deployments](#model-deployments)). `d` switches between them; the title says which
+is on screen, and the info line says how many jobs the other one holds (`106
+deployments · d shows them`). Search covers the view on screen. A deployment's status
+reads as `ct` shows it (`READY`, `DROPPED`, ...); the status filter and `status:` search
+still use the job statuses (`running`, `cancelled`, ...).
+
 Press `a`, or click `a All schemas` in the footer, to list the jobs in every
 database and schema the role can see instead, from the same list unscoped;
 the footer then offers `a Current schema`, which goes back. The
@@ -1133,7 +1142,8 @@ location of their own. Quote text containing `:` (for example `"training:0"`).
 
 | Field | Meaning |
 |-------|---------|
-| `id`, `status`, `owner`, `type` | job id, status, user or role, `training`/`sampling`/`log_prob` |
+| `id`, `status`, `owner`, `type` | job id, status, user or role, `training`/`sampling`/`log_prob`/`deployment` |
+| `class` | a deployment's class (`EVALUATION`) |
 | `model`, `method`, `dtype` | model name (`=` takes it whole, `Qwen/Qwen3-8B`, or as the Model column shows it, `Qwen3-8B`), `full` or `lora`, dtype |
 | `gpu`, `gpus` | GPU type (`H200`, `B200`, `B300`), requested GPU count |
 | `optimizer`, `lr`, `batch`, `seq` | optimizer name, learning rate, train batch size, max sequence length |
@@ -1174,6 +1184,7 @@ operators shows under it only while it has focus.
 | click `▸` / `▾` | Unfold or fold that job, as `→` / `←` do |
 | `e` | Expand or collapse every job's sub-jobs, also those of jobs that later pages of the list being read bring (jobs a later refresh adds start as usual) |
 | `a` | All schemas / current schema: switch to the account-level list of every database and schema the role can see (the footer's `a All schemas`), or back to the configured one (`a Current schema`) |
+| `d` | Deployments / Jobs: show the deployments, or the training and sampling jobs again |
 | `f` | All jobs / newest 2,000: when the configured schema's list came whole (the account-level list is unavailable) and holds more than 2,000 jobs, the list shows the newest 2,000 and every active job, as the account-level list does, and search covers those (one that matches none of them says `f searches all N jobs of the schema.`); `f` shows every job of it (drawing tens of thousands takes a few seconds), and again the newest 2,000. Refreshes keep the choice until another list is shown |
 | `ctrl+c` | Copy what is highlighted, else every row in the list with a `Whole ID` column (see above for what each cell copies as); in the preview, the highlight, else the whole preview |
 | `r` | Refresh (the list also refreshes every 60 seconds while it is showing); while it shows the configured schema in place of the account-level list (`Current schema only: DB.SCHEMA (reason)`), `r` asks that list again once a minute has passed since the last ask |
@@ -1235,6 +1246,9 @@ errors while keeping the last copy. `Enter` or a click opens the highlighted
 entire-job or sub-job scope on Logs (`⏎ opens its Logs` on the card's border).
 `l`, `g`, `m` and `c` open Logs, Resources, Training metrics and
 Checkpoints directly.
+A deployment's preview adds its class, replicas, idle timeout (`off` when it is
+never reclaimed), the deployment ID to call it by (`Call as`, the same ID `ct`
+shows) and the base URL of deployments in the job's schema. Its keys are `v` Serving, `l` Logs and `g` Resources.
 
 #### Job details
 
@@ -1247,6 +1261,8 @@ line does not fit on one row, the models are cut with `…`, then the id is left
 out (the header names it too). Switch tabs with `l` (Logs), `g`
 (Resources), `m` (Training metrics) and `c` (Checkpoints), or `t` for the
 next tab, round to Logs after the last.
+A deployment's tabs are Serving (`v`), Logs and Resources; a job opened by id
+shows the training tabs until its record says it is a deployment.
 
 - **Logs** is the live and historical log view described below. The pane shows
   one sub-job at a time, the one selected in the list beside it, so its lines
@@ -1261,6 +1277,8 @@ next tab, round to Logs after the last.
   background from its `Traceback (most recent call last):` to the exception
   that ends it (with any chained to it), and what the filter matches is marked
   in amber.
+  A serving drain's line (`drain_metrics`, every 30 seconds) ends with its numbers:
+  `16 req · p50 50ms · ttft p99 215ms · 2 replicas`, and `· N replica errors` when any.
 - **Resources** shows telemetry (`download_metrics`) for one sub-job at a
   time. `Space` (or a click on its name) shows the next one; `<` and `>` go
   back and forth. Its two-line pinned header names the sub-job, position,
@@ -1344,6 +1362,18 @@ next tab, round to Logs after the last.
     the job's screen logged in once its first log lines were drawn (see
     [Download sessions](rest-api.md#127-download-sessions)): the TUI keeps
     one open for its downloads while it runs, and closes it when it quits.
+  For a deployment the header adds that its GPU memory is reserved up front for
+  serving, so it reads near full all its life; KV cache use, on Serving, is the
+  memory signal.
+- **Serving** (deployments) reads the `drain_metrics` lines the deployment writes
+  to its console every 30 seconds, from its saved console (downloaded resumed, so a
+  refresh fetches only new chunks; about a minute behind live). The header says
+  `starting`, `starting (no metrics yet)`, `serving` or `ended`, the replica count,
+  how long ago the last drain was and how long the deployment took to start. The
+  table has one row per drain, newest first: requests per second, requests,
+  latency and time-to-first-token p50/p99, queue p99, running and waiting
+  requests, the highest KV cache use, and replicas (with their errors, when any).
+  It refreshes with the job while the tab is shown; `r` refreshes it now.
 - **Training metrics** charts what the training sub-job's `/step` and
   `/fwd-bwd` calls returned, read from its own `training.jsonl`
   ([Training metrics download](rest-api.md#125-training-metrics-download)),
@@ -1599,8 +1629,8 @@ Keys in the job details view (`/`, `e`, `n`, `p`, `s`, `[` and `]` work on Logs;
 
 | Key | Action |
 |-----|--------|
-| `l` `g` `m` | Logs / Resources / Training metrics tab, as in the preview, except `l` on Logs (below) |
-| `t` | Next tab, round to Logs after the last |
+| `l` `g` `m` `v` | Logs / Resources / Training metrics / Serving tab, as in the preview, except `l` on Logs (below) |
+| `t` | Next of the job's tabs, round to the first after the last |
 | `a` | Show every metric, or hide again the ones that aren't training signals (Training metrics) |
 | `w` | Cycle the window; so does a click on the window in the header, and a click on a window in the selector at the bottom shows it (Resources); `w` also cycles all steps, the last 100 and the last 1,000 (Training metrics) |
 | `Space` | Next sub-job, round to the first after the last, when the job has two or more; the view stays, back to `ALL`. `<` / `>` go back / forward; a click on the sub-job's name in the header goes forward (Resources). On Training metrics, the next training sub-job |
