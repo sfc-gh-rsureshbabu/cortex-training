@@ -369,6 +369,36 @@ def test_a_training_job_s_preview_has_no_serving_key():
     asyncio.run(run())
 
 
+def test_a_refresh_rebuilds_the_footer_only_when_its_keys_change():
+    job = _job(sub_jobs=[{"sub_job_id": "JOB_ID:training:0", "job_type": "training", "status": "RUNNING"}])
+    deployment = _job(sub_jobs=[{"sub_job_id": "JOB_ID:sampling:0", "job_type": "sampling", "status": "RUNNING",
+                                 "inference_config": {"deployment_class": "EVALUATION"}}])
+    client = MagicMock()
+    client.list_jobs.return_value = [job]
+    client.get_job.return_value = job
+
+    async def run():
+        app = CortexTrainingLogTUI(client, poll_interval=0.01)
+        async with app.run_test(size=(150, 42)) as pilot:
+            app.push_screen(JobSummaryScreen(client, "JOB_ID", job=job))
+            for _ in range(50):
+                await pilot.pause(0.02)
+                if isinstance(app.screen, JobSummaryScreen):
+                    break
+            screen = app.screen
+            app.workers.cancel_all()
+            await pilot.pause(0.1)
+            calls = []
+            screen.refresh_bindings = lambda: calls.append(1)
+            screen._refresh_view()
+            screen._refresh_view()
+            assert calls == []  # Textual rebuilds the footer on every call
+            screen._job = deployment  # opened by id, it turned out to be a deployment
+            screen._refresh_view()
+            assert calls == [1]
+
+    asyncio.run(run())
+
 
 def test_a_job_without_a_status_keeps_its_unknown_pill():
     job = _job(None, sub_jobs=[{"sub_job_id": "JOB_ID:training:0", "job_type": "training"}])

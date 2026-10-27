@@ -165,6 +165,7 @@ class JobSummaryScreen(FollowsPointer, Screen):
         self._reread_on_resume = False  # set when the details open over this preview
         self._expanded = False  # e: every value whole, however long, and the whole sub-job table
         self._long = False  # some value or table cell is (or, expanded, would be) cut
+        self._footer_keys: tuple | None = None  # (long, is a deployment) the footer was last built for
         self._table_shown = None  # what the sub-job table holds, so an unchanged refresh leaves it be
 
     def compose(self) -> ComposeResult:
@@ -292,10 +293,11 @@ class JobSummaryScreen(FollowsPointer, Screen):
         card.border_title = Content.styled(" Sub-jobs ", f"bold {theme.TEXT}")
         card.border_subtitle = Content.styled(f" {' · '.join(hints)} ", theme.MUTED)
         self._long = long
-        # Textual only redraws the footer when a binding's availability changed, so this is cheap
-        # even though nothing (e's or v/c's) usually did: e appears in the footer, or goes, and the
-        # job may have turned out to be a deployment, after a reload by id.
-        self.refresh_bindings()
+        keys = (long, v.is_deployment(self._job))
+        if keys != self._footer_keys:
+            # e comes or goes, or a job opened by id turned out to be a deployment.
+            self._footer_keys = keys
+            self.refresh_bindings()
 
     # The next steps from here, under the title: the footer has them too, but it
     # cuts its end on a narrow screen, and these say what each one opens.
