@@ -263,7 +263,7 @@ class JobSummaryScreen(FollowsPointer, Screen):
         # markup, so it shows literally. Each wrapped row's indent is a run of its
         # own too, so the text after it starts where the indent ends.
         self.query_one("#hero", Static).update(Content("\n").join(self._hero(width, now)))
-        base_url = v.base_url(self._client) if v.is_deployment(job) else ""
+        base_url = self._client.model_deployment_base_url if v.is_deployment(job) else ""
         grid, long = self._grid(v.preview_facts(job, now, base_url=base_url), width)
         self.query_one("#preview", Static).update(Content("\n").join(grid + self._lifecycle_rows(now, width)))
         self._render_fetch()

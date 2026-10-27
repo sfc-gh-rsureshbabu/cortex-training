@@ -2018,15 +2018,19 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
             # As the summary line puts them: "reason — reason_details".
             why = " — ".join(one_line(x).strip() for x in (self._job_reason, self._job_reason_details)
                              if x and str(x).strip())
-            return (f"waiting: the job is {job_word.upper()}" + (f" ({why})" if why else "")
+            return (f"waiting: the job is {self._said(job_word)}" + (f" ({why})" if why else "")
                     + f"; the log tail starts by itself when the job starts {hint}")
         if word in self._PRE_PLACEMENT:
-            return (f"waiting: {views.sub_job_label(sub_job_id)} is {word.upper()}; "
+            return (f"waiting: {views.sub_job_label(sub_job_id)} is {self._said(word)}; "
                     f"its log tail starts by itself once it is placed {hint}")
         # The service refused the tail as pending placement while the status
         # says otherwise (UNKNOWN when the service couldn't read the job's state).
         return (f"waiting: the service says the job is pending placement (its status reads "
-                f"{job_word.upper()}); the log tail starts by itself when the job starts {hint}")
+                f"{self._said(job_word)}); the log tail starts by itself when the job starts {hint}")
+
+    def _said(self, word: str) -> str:
+        """A status word as the badge says it: a deployment's in its own words (INITIALIZING, not PLACING)."""
+        return views.status_word_for(self._job, word).upper()
 
     def _waiting_for(self, sub_job_id: str) -> tuple[str, str] | None:
         """The wait, if any, before ``sub_job_id`` can have logs: (kind, note)."""
@@ -2034,7 +2038,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if word in self._PRE_PLACEMENT:
             return "pending", self._pending_note(sub_job_id)
         if word in self._STARTING:
-            return "starting", (f"waiting: {views.sub_job_label(sub_job_id)} is {word.upper()}; "
+            return "starting", (f"waiting: {views.sub_job_label(sub_job_id)} is {self._said(word)}; "
                                 "its log appears here once it is up")
         if views.status_word(self._job_status) == "unknown":
             # The service couldn't read the job's state: its tail may not answer either. It is tried.
@@ -2696,7 +2700,8 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
                         "the tail starts again once it is running")
             self._set_waiting("stopped", note)
         else:
-            self._set_waiting("stopped", f"waiting: {name} is {why.upper()}; the tail starts again once it is running")
+            self._set_waiting("stopped",
+                              f"waiting: {name} is {self._said(why)}; the tail starts again once it is running")
 
     def _run_download(self, sub_job_id: str) -> None:
         """Worker thread. The saved-console download this view claimed (see _claim_stdout):

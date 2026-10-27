@@ -357,11 +357,6 @@ def status_word_for(job: Any, status: Any) -> str:
     return status_word(status)
 
 
-def base_url(client: Any) -> str:
-    """The OpenAI-compatible base URL of deployments in ``client``'s schema."""
-    return client.model_deployment_base_url
-
-
 def _call_as(job: dict) -> str:
     try:
         return _deployment_id_from_job_id(job_id_of(job))
@@ -378,7 +373,8 @@ def deployment_facts(job: dict) -> list:
     return [
         ("Class", deployment_class(job)),
         ("Replicas", str(int(replicas)) if replicas is not None else "—"),
-        ("Idle timeout", "off" if idle == 0 else fmt_duration(idle)),  # 0 disables reclamation
+        # 0 disables reclamation; none set means the server's own setting.
+        ("Idle timeout", "off" if idle == 0 else "server default" if idle is None else fmt_duration(idle)),
         *([("Call as", call_as)] if call_as else []),
     ]
 

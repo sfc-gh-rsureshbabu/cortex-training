@@ -135,6 +135,11 @@ def test_a_deployment_s_count_and_sub_job_say_its_status_as_its_row_does():
     screen = LogScreen(MagicMock(), "8", job=_deployment())
     assert str(screen._source_text(DEPLOY)).endswith("ready")
     assert str(LogScreen(MagicMock(), "7", job=_training())._source_text("7:training:0")).endswith("running")
+    # The Logs tab's waiting notes word it as the badge does.
+    kind, note = LogScreen(MagicMock(), "8", job=_deployment("PLACING"))._waiting_for(DEPLOY)
+    assert kind == "starting" and "is INITIALIZING" in note and "PLACING" not in note, note
+    placing = {**_training(), "status": "PLACING"}
+    assert "is PLACING" in LogScreen(MagicMock(), "7", job=placing)._waiting_for("7:training:0")[1]
 
 
 def test_preview_facts_of_a_deployment():
@@ -146,6 +151,9 @@ def test_preview_facts_of_a_deployment():
     assert facts["Call as"] == f"sf-ct-{UUID}"
     assert facts["Base URL"] == "https://HOST/x/inference/v1"
     assert dict(v.preview_facts(_deployment(idle_timeout_seconds=1800), NOW))["Idle timeout"] == "30m 00s"
+    unset = _deployment()
+    del unset["idle_timeout_seconds"]
+    assert dict(v.preview_facts(unset, NOW))["Idle timeout"] == "server default"
     assert "Base URL" not in dict(v.preview_facts(_deployment(), NOW))
     # The CLI's rule: a deployment that failed or is dropped no longer serves at that URL.
     for status in ("FAILED", "CANCELLING", "CANCELLED", "TERMINATED"):
@@ -162,11 +170,10 @@ def test_base_url_comes_from_the_client():
 
     real = CortexTrainingClient(base_url="https://HOST", database="DB", schema="PUBLIC")
     held = printable_client(real)  # as the TUI holds it
-    assert v.base_url(held) == real.model_deployment_base_url
+    assert held.model_deployment_base_url == real.model_deployment_base_url
     other = held.for_job({"database_name": "DB", "schema_name": "OTHER"})
-    assert v.base_url(other) == "https://HOST/api/v2/databases/DB/schemas/OTHER/cortex-training/inference/v1"
-    with pytest.raises(AttributeError):  # renamed in the client: fails here, not as a Base URL row gone quiet
-        v.base_url(object())
+    assert other.model_deployment_base_url == (
+        "https://HOST/api/v2/databases/DB/schemas/OTHER/cortex-training/inference/v1")
 
 
 @pytest.fixture(autouse=True)

@@ -172,7 +172,7 @@ def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     assert next(iter(table.columns[0].cells)) == "—"
 
 
-def test_an_ended_deployment_s_last_drain_reads_as_a_time_not_an_age():
+def test_an_ended_deployment_s_last_drain_reads_as_a_time_not_an_age(monkeypatch):
     from datetime import datetime
 
     from cortex_training.tui.serving_view import ServingPane
@@ -184,6 +184,8 @@ def test_an_ended_deployment_s_last_drain_reads_as_a_time_not_an_age():
     assert " ago" in str(pane._status_text())
     job["value"] = _deployment("CANCELLED")  # the pane stops redrawing: an age would go stale
     assert "last drain at 2026-10-26 19:46" in str(pane._status_text())
+    monkeypatch.setattr("cortex_training.tui.serving_view.local_time", lambda dt: "")  # out of the local range
+    assert "last drain" not in str(pane._status_text())
 
 
 def test_a_long_run_shows_its_newest_drains_and_says_so():

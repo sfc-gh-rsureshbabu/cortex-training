@@ -1250,7 +1250,7 @@ entire-job or sub-job scope on Logs (`⏎ opens its Logs` on the card's border).
 For a training or sampling job, `l`, `g`, `m` and `c` open Logs, Resources,
 Training metrics and Checkpoints directly.
 A deployment's preview adds its class, replicas, idle timeout (`off` when it is
-never reclaimed), the deployment ID to call it by (`Call as`, the same ID `ct`
+never reclaimed, `server default` when the job sets none), the deployment ID to call it by (`Call as`, the same ID `ct`
 shows) and the base URL of deployments in the job's schema. Its keys are `v`
 Serving, `l` Logs and `g` Resources.
 
@@ -1375,8 +1375,9 @@ its record says it is a deployment.
   to its console every 30 seconds, from its saved console (downloaded resumed, so a
   refresh fetches only new chunks; about a minute behind live). The header says
   `starting`, `starting (no metrics yet)`, `serving`, `status unknown`, `dropping`
-  or `ended` (`running` while a first read finds no drain yet), the replica count, how long
-  ago the last drain was (once the job has ended, its time), how long the deployment took to start, and the
+  or `ended` (`running` while a first read finds no drain yet), the replica
+  count, how long ago the last drain was (its time once the deployment is
+  dropping or ended), how long the deployment took to start, and the
   download's warnings (skipped chunks, say). The table has one row per drain,
   newest first, for the newest 240 (about two hours; a note under it says when
   it leaves older ones out): requests per second, requests,
