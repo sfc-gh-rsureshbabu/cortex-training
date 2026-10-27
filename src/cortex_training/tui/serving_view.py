@@ -161,11 +161,13 @@ class ServingPane(_Pane):
             return Text("Reading the console…", style=theme.MUTED)
         if not drains:
             return Text("No drain_metrics yet: a deployment writes one every 30 s once it serves.", style=theme.MUTED)
-        table = Table(box=None, pad_edge=False, header_style="bold")
+        start = max(0, len(drains) - _MAX_ROWS)
+        caption = f"newest {_MAX_ROWS} of {len(drains)} drains" if start else None
+        table = Table(box=None, pad_edge=False, header_style="bold", caption=caption,
+                      caption_justify="left", caption_style=theme.MUTED)
         for name in ("Time", "req/s", "Requests", "Latency p50", "p99", "TTFT p50", "p99", "Queue p99",
                      "Run/Wait", "KV max", "Replicas"):
             table.add_column(name, justify="left" if name == "Time" else "right")
-        start = max(0, len(drains) - _MAX_ROWS)
         for i in range(len(drains) - 1, start - 1, -1):
             d, prev = drains[i], drains[i - 1] if i else None
             r = serving.rate(prev, d)

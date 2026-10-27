@@ -1376,7 +1376,9 @@ its record says it is a deployment.
   `starting`, `starting (no metrics yet)`, `serving`, `status unknown`, `dropping`
   or `ended` (`running` while a first read finds no drain yet), the replica count, how long
   ago the last drain was, how long the deployment took to start, and the
-  download's warnings (skipped chunks, say). The table has one row per drain, newest first: requests per second, requests,
+  download's warnings (skipped chunks, say). The table has one row per drain,
+  newest first, for the newest 240 (about two hours; a note under it says when
+  it leaves older ones out): requests per second, requests,
   latency and time-to-first-token p50/p99, queue p99, running and waiting
   requests, the highest KV cache use, and replicas (with their errors, when any).
   It refreshes with the job while the tab is shown, and once more when the job

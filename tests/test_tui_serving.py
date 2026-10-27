@@ -65,7 +65,7 @@ def test_the_real_console_lines_parse(tmp_path):
 
 
 def _failed_create(line: str) -> str:
-    """The real create-job row, as the zone head writes one that raised (``Type: message``)."""
+    """The real create-job row, as a deployment writes one that raised (``Type: message``)."""
     return json.dumps({**json.loads(line), "duration_s": 2.0, "error": "RuntimeError: CUDA out of memory"})
 
 
@@ -170,6 +170,19 @@ def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     assert "last drain" not in str(pane._status_text())
     table = pane._table()
     assert next(iter(table.columns[0].cells)) == "—"
+
+
+def test_a_long_run_shows_its_newest_drains_and_says_so():
+    from cortex_training.tui.serving_view import _MAX_ROWS
+    from cortex_training.tui.serving_view import ServingPane
+
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: [])
+    pane._data = serving.ServingData([serving.parse_line(_drain(30.0 * i, i)) for i in range(_MAX_ROWS)])
+    assert pane._table().caption is None
+    pane._data = serving.ServingData([serving.parse_line(_drain(30.0 * i, i)) for i in range(_MAX_ROWS + 5)])
+    table = pane._table()
+    assert table.row_count == _MAX_ROWS and table.caption == f"newest {_MAX_ROWS} of {_MAX_ROWS + 5} drains"
+    assert next(iter(table.columns[2].cells)) == str(_MAX_ROWS + 4)  # newest first
 
 
 def test_serving_state():
