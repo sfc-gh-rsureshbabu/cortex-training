@@ -1,22 +1,13 @@
 # Cortex Training REST API Reference
 
-> **Status.** This page is a repository snapshot for the client version in this
-> branch. The service's own OpenAPI specification remains the source of truth
-> for the wire schema.
+> **Status.** This page is the customer-facing REST contract: the client in this
+> repository codes against it, and it is the reference for anything a caller
+> can observe.
 >
 > **Scope.** This document describes the customer-facing Cortex Training REST
 > surface used by this repository's `CortexTrainingClient`. It covers REST paths,
 > request framing, asynchronous polling, client-visible schemas, checkpoints,
 > generation, operations, and logs.
->
-> **Sources used for this snapshot.** The client and wire implementation in
-> `src/cortex_training/client.py` and `src/cortex_training/wire.py`, the
-> command-line interface in `src/cortex_training/_cli.py`, their unit tests,
-> and their unit tests are the local evidence for this document. The service's
-> own OpenAPI specification remains the source of truth when it is available.
-> The server-side statements in sections 8.2 and 8.3 about `model_options`
-> and the `prime_rl` block describe server behavior and are not exercised by
-> this repository's tests.
 >
 > **Important distinction.** `CortexTrainingClient` is a low-level transport client.
 > ArcticTraining may put additional keys such as `context` and `processing`
@@ -81,13 +72,14 @@ is `log_prob`.
 ### 1.4 Supported models
 
 The machine-readable source of truth for model availability, workflow support,
-context limits, and recommended configurations is
-[`model-catalog/models.json`](../../model-catalog/models.json). Referenced
-profiles live under [`model-catalog/profiles/`](../../model-catalog/profiles/).
+context limits, and recommended configurations is the model catalog under
+[`model-catalog/models/`](../../model-catalog/models/): one folder per model,
+holding a job file for each supported context, hardware, training or inference
+sub-job, and LoRA or full mode. See the
+[catalog README](../../model-catalog/README.md).
 
 This API reference does not duplicate the model table. Run
-`python scripts/validate_model_catalog.py` after changing the catalog or a
-profile.
+`python model-catalog/validate_catalog.py` after changing the catalog.
 
 ---
 
@@ -116,7 +108,7 @@ as given.
 `CortexTrainingClient` defaults `endpoint` to `cortex-training`.
 
 ```python
-client = CortexTrainingClient.from_connection_name("training")
+client = CortexTrainingClient.from_configs(connection="training")
 ```
 
 The SQL statements API used by execution-log download is outside this prefix:
@@ -137,8 +129,9 @@ different name, pass it explicitly: `endpoint="my-endpoint-name"`.
 
 ### 2.2 Authentication
 
-`CortexTrainingClient.from_connection_name(...)` uses the Snowflake
-Connector's resolved REST origin and live session token:
+A client built from a Snowflake connection profile
+(`CortexTrainingClient.from_configs(...)`) uses the Snowflake Connector's
+resolved REST origin and live session token:
 
 ```http
 Authorization: Snowflake Token="<session-token>"
@@ -148,8 +141,8 @@ The client reconnects once and replays the request when Snowflake explicitly
 reports that the session token expired. Named profiles and the configured
 default profile are supported.
 
-Direct PAT compatibility is available through
-`CortexTrainingClient.from_pat(...)`, which sends:
+When no profile exists, `from_configs()` uses `CORTEX_TRAINING_HOST` and
+`CORTEX_TRAINING_PAT` (for CI), and sends:
 
 ```http
 Authorization: Bearer <PAT>
@@ -270,6 +263,10 @@ The general request path retries connection/time-out failures and HTTP:
 307, 308, 404, 409, 429, 500, 502, 503, 504
 ```
 
+TLS errors count as connection failures and are retried, except certificate
+verification failures (an untrusted, expired, or mismatched certificate), which
+fail the same way on every attempt and are raised immediately.
+
 Redirects are never followed; a 307 or 308 is retried on the original URL.
 
 A 404 is retried because a job can be briefly invisible right after it is
@@ -356,6 +353,10 @@ Paths are relative to the prefix in [section 2.1](#21-base-url).
 
 The operation endpoint supports the operation types in
 [section 7](#7-generic-operation-envelope).
+
+Model deployments add no client-called path: the `*_model_deployment*` methods
+use the job paths above, and a deployment serves under
+`/inference/v1` ([section 14](#14-model-deployments)).
 
 These calls are outside the Cortex Training prefix:
 
@@ -476,6 +477,7 @@ The response shape consumed by this repository is flat at each sub-job:
   "job_id": "job-id",
   "status": "running",
   "reason": "",
+  "reason_details": "",
   "created_at": "2026-07-20T18:00:00Z",
   "updated_at": "2026-07-20T18:01:00Z",
   "state_changed_at": "2026-07-20T18:01:00Z",
@@ -1303,7 +1305,7 @@ re-tokenizing it: send the sequence as a pre-tokenized prompt with
 `max_tokens: 1` and read `prompt_logprobs[i]` as the log probability of prompt
 token `i`. The prompt must stay shorter than the sampling sub-job's
 `max_seq_len`. The
-[on-policy distillation recipe](../../recipes/distillation/README.md) scores
+[on-policy distillation example](../../examples/distillation/README.md) scores
 student rollouts with a teacher this way.
 
 ### 6.7 Streaming generate - `POST /{job_id}/generate-stream`
@@ -1827,11 +1829,14 @@ long-context/memory knobs:
 expert id as `uint8` when the model has at most 256 experts and as `uint16`
 when it has 257 to 65536 experts. A `uint16` capture uses twice as many bytes
 as a `uint8` capture for the same sequence length, MoE layer count, and top-k.
-The service does not choose the cap. Derive both the sampling and training
-caps with `cortex_training.router_replay_planner`, which selects that width
-from the expert count and includes it in `CachePlan.max_cache_bytes`. The same
-object can be set on a sampling sub-job through `extra_sampling["router_replay"]`.
-See [python-sdk.md](python-sdk.md#router-replay-capacity-planning).
+The service and the client do not choose the cap: set
+`router_replay.max_cache_bytes` in the job body for each sub-job (on a sampling
+sub-job built with the SDK, through `extra_sampling["router_replay"]`). The
+repository's RL example fills in `5368709120` (5 GiB) for training and
+`21474836480` (20 GiB) for sampling on MoE models, and describes an optional
+planner that sizes a cap from the expert count, sequence length, MoE layer
+count, and top-k; see
+[Router-replay capacity planning](../../examples/rl/README.md#router-replay-capacity-planning).
 
 For LoRA training, set `extra_training["peft_config"]` to a PEFT
 `LoraConfig`-compatible object. It is validated and rewritten client-side, so it
@@ -1945,7 +1950,7 @@ values work, the Value column says so: an even count, or the names that work.
 | `lm_head.token_chunk_size` | trainer | positive integer | `fused_lm_head_token_chunk_size`; also `prime_rl.fused_lm_head_token_chunk_size` when `ep_size` > 1 |
 | `lm_head.vocab_chunk_size` | trainer | positive integer; takes effect only with `lm_head.token_chunk_size` | `fused_lm_head_vocab_chunk_size` |
 | `lm_head.cross_entropy` | trainer | `true`, `false` or `liger` | `prime_rl.fused_cross_entropy` |
-| `liger` | trainer | `true` or `false` | `true` sets `model_provider` to `"liger"`; `false` sets nothing |
+| `liger` | trainer | `true` or `false` | `true` applies Liger kernels on a huggingface model; `false` sets nothing |
 | `moe.grouped_mm` | trainer | `true` or `false` | `prime_rl.moe_use_grouped_mm` |
 | `moe.comm_backend` | trainer | non-empty string (`deepep`, `uccl`) | `prime_rl.ep_comm_backend` |
 | `moe.comm_sms` | trainer | even positive integer | `prime_rl.deepep_num_sms` |
@@ -1969,9 +1974,9 @@ the sub-job starts depends on the model and on `ep_size`:
   `qwen3_5_moe` (or `qwen3_5_moe_text`) (in the
   [model catalog](../../model-catalog/README.md), Qwen3.6-35B-A3B), these fail
   at startup: `compile.fullgraph`, `lm_head.vocab_chunk_size`,
-  `attention.sparse_mla` and `numerics.fp32_residual`. `liger` set to `true`
-  never gets that far: it sets `model_provider` to `"liger"`, while `ep_size`
-  above 1 needs `"prime_rl"`, so the job is rejected before the model loads.
+  `attention.sparse_mla` and `numerics.fp32_residual`. `model_options.liger`
+  set to `true` applies to huggingface models. `ep_size` above 1 needs
+  `model_provider` `"arctic"`, so that combination is rejected before the model loads.
 - With `ep_size` > 1 a model that is not a supported MoE model fails.
 
 Other models or `ep_size` combinations may fail the job at startup.
@@ -2010,8 +2015,8 @@ Notes on single keys:
   `ep_size` > 1 also `prime_rl.fused_lm_head_token_chunk_size`). To turn fused
   cross-entropy off, set `lm_head.cross_entropy` to `false` with `ep_size` > 1,
   or the block entry `prime_rl.fused_cross_entropy` to `false` with
-  `model_provider` `prime_rl` and `ep_size` 1 or omitted; with `model_provider`
-  `liger`, use `huggingface`.
+  `model_provider` `arctic` and `ep_size` 1 or omitted; turn off
+  `model_options.liger`.
 - On server versions that have it, `numerics.fp32_parity` is on by default
   (`true`), so a job that sends no `model_options` runs it, and its
   log-probabilities and loss differ from those of a server version that predates
@@ -2091,7 +2096,7 @@ sent, the first in the order `activation_checkpointing`,
 `activation_checkpointing_freq`, `gradient_checkpointing_freq`,
 `gradient_checkpointing` counts. So `gradient_checkpointing=true` with
 `checkpointing.freq=1` is accepted. Different values are rejected.
-`liger=false` together with `model_provider="liger"` is rejected the same way.
+`liger=false` is rejected when the same training config already applies Liger kernels.
 With `ep_size` above 1 the `fp32_parity` field is not compared: the key writes
 `prime_rl.fp32_parity`, and the key is compared with that entry. The shipped
 dense training configs send `model_provider` `huggingface`, and the Qwen3.5 and
@@ -2166,9 +2171,10 @@ not list, such as `trust_remote_code`, has no key and stays in the block.
 
 With `ep_size` 1 or omitted, `lm_head.cross_entropy` fails at startup and the
 block entry `fused_cross_entropy` is the only spelling: with
-`model_provider="prime_rl"` it decides whether the server refuses
+`model_provider="arctic"` it decides whether the server refuses
 forward/backward requests whose loss needs per-token log-probabilities, and
-with `"liger"` or `"huggingface"` it has no effect.
+with `"huggingface"` it has no effect. `model_options.liger` is separate: it
+applies Liger kernels on a huggingface model.
 
 With `ep_size` 1 or omitted, the block entries `fp32_lm_head`,
 `fused_lm_head_token_chunk_size`, `ac_config` and `fp32_parity` have no effect,
@@ -3168,12 +3174,7 @@ most a second.
 ```python
 from cortex_training.client import CortexTrainingClient, SubJobConfig
 
-client = CortexTrainingClient.from_pat(
-    host=HOST,
-    pat=PAT,
-    database=DATABASE,
-    schema=SCHEMA,
-)
+client = CortexTrainingClient.from_configs(database=DATABASE, schema=SCHEMA)
 
 training = SubJobConfig.training_job(
     model_name="Qwen/Qwen3-1.7B",
@@ -3271,12 +3272,7 @@ in vLLM before the first adapter sync.
 ```python
 from cortex_training.client import CortexTrainingClient, SubJobConfig
 
-client = CortexTrainingClient.from_pat(
-    host=HOST,
-    pat=PAT,
-    database=DATABASE,
-    schema=SCHEMA,
-)
+client = CortexTrainingClient.from_configs(database=DATABASE, schema=SCHEMA)
 
 lora_config = {
     "peft_type": "Lora",
@@ -3337,7 +3333,248 @@ result = client.poll_request(job_id, request_id)
 
 ---
 
-## 14. Known limitations
+## 14. Model deployments
+
+A model deployment is an ephemeral, OpenAI-compatible evaluation endpoint. The
+server has no separate deployment resource: a deployment is an ordinary job
+([section 5](#5-control-plane-endpoints)) with exactly one `sampling` sub-job
+whose `inference_config.deployment_class` is `"EVALUATION"`. The
+`CortexTrainingClient.*_model_deployment*` methods and the `cortex-training
+model-deployment` CLI build on the job endpoints and never show the backing
+job or sub-job IDs.
+
+### 14.1 Deployment IDs
+
+A deployment is identified by the `deployment` output key and the CLI's
+`DEPLOYMENT` positional argument. Today that value is always the ID
+`sf-ct-<UUID>`, where `<UUID>` is the backing job's canonical lowercase UUID;
+names may be accepted later under the same key and argument. Inputs that do
+not use exactly this form are rejected before any request is sent
+(`deployment must currently be an sf-ct-<UUID> ID`). Use the deployment ID as
+the OpenAI `model`; the base URL is `<prefix>/inference/v1` for the
+deployment's database and schema (`model_deployment_base_url`).
+
+### 14.2 Deployment spec
+
+`create` accepts one JSON object with exactly these three top-level fields:
+
+```json
+{
+  "deployment": {"class": "EVALUATION", "min_replicas": 3, "gpus_per_replica": 2, "gpu_type": "H200"},
+  "source": {"type": "base_model", "model": "Qwen/Qwen3-1.7B"},
+  "inference": {"max_seq_len": 8192}
+}
+```
+
+`deployment` describes the deployment itself: its class and capacity.
+
+A checkpoint source is `{"type": "checkpoint", "job_id": ..., "checkpoint_id": ...}`
+and must name a completed `weights-only` checkpoint
+(`examples/api/model-deployment-checkpoint.json`). It names no model: the
+server already knows the source job's model and rejects one that does not
+match it, so `create` reads the training sub-job's `model_name` from
+`GET /{source job_id}` and sends that. `model` is rejected as an unknown key.
+
+Client-side checks (all others are left to the server):
+
+| Field | Rule |
+|---|---|
+| every object | no unknown keys; an error names both unknown and missing keys, so a typo such as `min_replica` is reported as such |
+| `deployment.class` | exactly `"EVALUATION"`; only `EVALUATION` is supported today |
+| `source.type` | `base_model` or `checkpoint`; every source field a non-empty string |
+| counts | positive integers (`true`/`false` and fractions rejected) |
+| `deployment.gpu_type` | `H200`, `B200`, or `B300`, case-insensitive |
+| `gpus_per_replica` | 1, 2, 4, or 8 |
+| `min_replicas * gpus_per_replica` | at most 8, or a multiple of 8 |
+
+Which models can be deployed, and the minimum GPUs per replica each needs, is
+decided by the server (`Unsupported model for a model deployment: <name>`), as
+for ordinary sampling jobs. New models need no client release. `create
+--dry-run` runs only these client-side checks and prints the normalized spec;
+it does not read a checkpoint's source job.
+
+The spec becomes a `POST /` body with `idle_timeout_seconds: 0`, top-level
+`hardware` set to `gpu_type`, and one sampling sub-job with
+`inference_config.{deployment_class, num_replicas, n_gpus, max_seq_len}`,
+`inference_config.vllm_config.{tensor_parallel_size, max_model_len}`, and
+`source_checkpoint_info: {source_job_id, checkpoint_id}` for a checkpoint
+source. `n_gpus` is `min_replicas * gpus_per_replica`.
+
+### 14.3 Statuses
+
+Deployment statuses are derived from the job status
+([section 3.2](#32-job-states)):
+
+| Job status | Deployment status |
+|---|---|
+| `pending` | `PENDING` |
+| `placing`, `initializing` | `INITIALIZING` |
+| `running` | `READY` |
+| `failed` | `FAILED` |
+| `cancelling` | `DROPPING` |
+| `cancelled`, `done` | `DROPPED` |
+| `terminated` | `TERMINATED` |
+| anything else | the job status upper-cased (e.g. `UNKNOWN`) |
+
+`wait_for_model_deployment` returns on `READY`. It raises
+`ModelDeploymentWaitError` on `FAILED` or `TERMINATED` (naming the failure
+code and pointing to `download-log`) or `DROPPED`, and
+`ModelDeploymentWaitTimeout` (a `TimeoutError`) when the poll timeout
+(`--timeout`, default `--poll-timeout`) passes. The timeout message says the
+deployment is still running and holding GPUs. Both carry the last observed
+metadata as `deployment`; `create --wait` prints that instead of the initial
+`PENDING`. Ctrl+C during `wait` or `create --wait` prints
+`interrupted; sf-ct-<UUID> is still running ...` and exits with code 130. No
+deployment is dropped automatically.
+
+The server reports why a job is in its status as `reason`, a short token such
+as `sub_job_failed`, and `reason_details`, a readable sentence that explains it.
+For `FAILED` and `TERMINATED`, these are shown as `failure: {code, message}`
+(`code` is `reason`, `message` is `reason_details`), and `wait` includes both
+in its error. In any other status, they are shown as `status_reason` and
+`status_details` (e.g. `quota_filled` and `needs 8 GPUs; 64 currently
+active`), except that the server's `cancelled_by_client` is not repeated for
+`DROPPING`/`DROPPED`, where the status already says it; its `reason_details`
+is omitted with it. Backing job and sub-job IDs in `reason_details` are
+replaced by the deployment ID. `base_url` is shown only while the deployment
+can serve: it is omitted for `FAILED`, `DROPPING`, `DROPPED`, and
+`TERMINATED`.
+
+### 14.4 Reading deployments
+
+In the CLI, `create`, `create --wait`, and `wait` print the same summary:
+`deployment`, `status`, `base_url`, and `failure` when present. `list` prints
+only `deployment` and `status` per deployment, oldest first, and `describe`
+prints the full record. The client methods return the full metadata in every
+case.
+
+`list_model_deployments` (`GET /`, keeping only deployments) and
+`describe_model_deployment` (`GET /{job_id}`) report what the server stored and
+do not re-check admission rules, so a deployment using a model or GPU shape
+this client does not know about is still listed. A record is rejected only if
+it is malformed: non-positive counts,
+`n_gpus != num_replicas * tensor_parallel_size`, or
+`max_seq_len != max_model_len`.
+
+`list --status STATUS` (repeatable, case-insensitive) keeps only deployments in
+the given statuses; an unknown status is rejected.
+
+`describe` groups the deployment's configuration under `spec` for readability,
+in the same `deployment` / `source` / `inference` shape. It is a read view, not
+a `create` input: it may gain read-only fields, and it is not guaranteed to be
+accepted by `create`.
+
+Missing metadata is reported, not guessed:
+
+- `gpu_type` (and `describe`'s `spec.deployment.gpu_type`) is `null` when the
+  server returns no `hardware`, e.g. for a job read while the server cannot
+  reach its scheduler.
+- The source is `checkpoint` only when the sub-job carries
+  `source_checkpoint_info` (see [section 15](#15-known-limitations), item 5).
+
+### 14.5 Dropping
+
+`drop_model_deployment` looks the job up with `GET /{job_id}` and refuses a job
+that is not a deployment. If the deployment is `PENDING`, `INITIALIZING`, or
+`READY` (or in a status this client does not know), it calls
+`POST /{job_id}:cancel`, and the status moves through `DROPPING` to `DROPPED`.
+The other statuses are handled without a cancel, as described below.
+
+Dropping is idempotent. The server's job-not-found error counts as already
+dropped; any other 404 is raised, since the deployment may still be running. A
+`DROPPING` or `DROPPED` deployment is reported as dropped without a second
+cancel.
+
+A `FAILED` or `TERMINATED` deployment holds no GPUs and cannot be dropped: the
+server rejects cancelling a failed or terminated job
+([section 5.5](#55-cancel-job---post-job_idcancel)). `drop` does not call
+cancel for it and returns `dropped: false` with its status. This is not an
+error, and the CLI still exits `0`:
+
+```json
+{"deployment": "sf-ct-<UUID>", "dropped": false, "status": "FAILED"}
+```
+
+Every deployment lookup (`describe`, `wait`, `drop`, and the downloads) treats
+the server's job-not-found error (code `517601`) as final on the first attempt,
+even for a deployment this client created in the last 120 seconds, which other
+lookups keep retrying ([section 3.5](#35-retries)).
+
+### 14.6 Logs and metrics
+
+`download_model_deployment_logs` (execution logs by default, or
+`log_type="stdout"`) and `download_model_deployment_metrics` use the downloads
+in [section 12](#12-logs-and-events), then write every file directly into the
+output directory under its server filename. Sub-job directories are flattened
+away; a deployment has exactly one sub-job, so its filenames do not collide. A
+file from an earlier download into the same directory is replaced.
+
+Results list each `filename` and `saved_path`. The stdout and metrics results
+also include `chunk_count`. Every saved file has mode `0600`.
+
+File contents are written as the server produced them, so a log line may
+mention the backing job or sub-job ID.
+
+### 14.7 Errors
+
+Every HTTP error from a deployment method, including `create` and the requests
+made by the log and metrics downloads, is replaced by
+
+```text
+model deployment sf-ct-<UUID> request failed with HTTP <status> (<code>): <message> (snowflake request id: <id>)
+```
+
+`create` has no deployment ID yet, so its errors start with
+`model deployment request failed`. The server's error code and message are
+kept, so "feature disabled", "not authorized", and "unsupported model" stay
+distinguishable. The backing job ID is replaced by the deployment ID in the
+message, and the request URL and raw body are never shown. A job-not-found
+error becomes `model deployment sf-ct-<UUID> not found in <DB>.<SCHEMA>`.
+
+Request debug log lines written while a deployment method runs also name the
+deployment ID instead of the backing job ID. Local filesystem errors are
+raised unchanged.
+
+### 14.8 Calling a deployment
+
+`CortexTrainingClient` does not call the deployment itself; any
+OpenAI-compatible client does. This is the behavior a caller sees, as checked
+by the `test_tc6_*` cases in `tests/test_model_deployment_e2e.py`. The
+streaming example (`examples/model_deployment/streaming.py`) codes against it.
+
+| Item | Behavior |
+|---|---|
+| Path | `POST {base_url}/chat/completions`, with `base_url` = `<prefix>/inference/v1` ([section 14.1](#141-deployment-ids)) |
+| Auth | `Authorization: Bearer <PAT>` and `X-Snowflake-Authorization-Token-Type: PROGRAMMATIC_ACCESS_TOKEN` |
+| `model` | The deployment ID, `sf-ct-<UUID>`; responses echo it as `model` |
+| Length limit | `max_completion_tokens`. `max_tokens` is rejected with HTTP 400, `{"error": {"type": "invalid_request_error", "param": "max_tokens", "code": "unsupported_parameter"}}` |
+| Not enabled | HTTP 404 while inference is not enabled for the account |
+
+Without `stream`, the response is one `chat.completion` object with
+`choices[0].message.content`, `finish_reason`, and `usage`.
+
+With `"stream": true`, the response is `Content-Type: text/event-stream` with
+one `data: <chat.completion.chunk JSON>` line per chunk and a final
+`data: [DONE]`:
+
+1. The first chunk's delta is `{"role": "assistant", "content": ""}`.
+2. Each following chunk's `choices[0].delta.content` is the next text.
+3. The last chunk before `[DONE]` has an empty delta and a non-null
+   `finish_reason` (`stop`, or `length` at `max_completion_tokens`).
+4. With `"stream_options": {"include_usage": true}`, every chunk carries
+   `"usage": null` and one more chunk, with `"choices": []`, carries the token
+   counts.
+
+The status is already 200 once streaming starts, so a later failure cannot
+change it. The example treats a chunk with an `error` key, a `data` line that
+is not JSON, or a stream that ends without `[DONE]` as a failed call.
+
+`GET {base_url}/models` is meant to list the `READY` deployments the caller
+owns in the schema, but see [section 15](#15-known-limitations), item 6.
+
+---
+
+## 15. Known limitations
 
 These are current gaps, not supported API behavior:
 
@@ -3351,3 +3588,13 @@ These are current gaps, not supported API behavior:
 4. Generate prompt validation resolves `max_seq_len` from the first sub-job
    carrying an `inference_config` rather than matching `job_type="sampling"`. A
    `log_probability` sub-job listed first therefore supplies the wrong window.
+5. The server does not yet echo `source_checkpoint_info` when a job is read
+   back (it is accepted on create), so a checkpoint model deployment is
+   reported with a `base_model` source by `list_model_deployments`,
+   `describe_model_deployment`, and `wait_for_model_deployment`
+   ([section 14.4](#144-reading-deployments)).
+6. `GET {base_url}/models` has been seen to return HTTP 200 with an empty
+   `data` list while a `READY` deployment in the same schema served chat
+   completions ([section 14.8](#148-calling-a-deployment)). Use
+   `list_model_deployments` or `cortex-training model-deployment list` to find
+   deployments.

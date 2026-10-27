@@ -17,7 +17,6 @@
 
 __version__ = "0.0.2"
 
-from . import router_replay_planner
 from . import wire
 from .client import AccountJobListUnavailable
 from .client import ChunkGroupConflictError
@@ -32,6 +31,7 @@ from .client import Hardware
 from .client import InferenceConfig
 from .client import InvalidPageToken
 from .client import JobType
+from .client import ModelDeploymentSpec
 from .client import SubJobConfig
 from .client import TrainingConfig
 from .client import build_forward_backward_kwargs
@@ -56,8 +56,8 @@ __all__ = [
     "TrainingConfig",
     "InferenceConfig",
     "JobType",
+    "ModelDeploymentSpec",
     "Hardware",
-    "router_replay_planner",
     "wire",
     "__version__",
 ]
