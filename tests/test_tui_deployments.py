@@ -328,6 +328,25 @@ def test_e_folds_when_every_job_in_the_view_is_unfolded():
     asyncio.run(run())
 
 
+def test_e_in_one_view_leaves_the_other_view_s_folds_be():
+    c = _client([_training(), _deployment()])  # both live: both start unfolded
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            job = {j["job_id"]: j for j in screen._jobs_by_key.values()}
+            await pilot.press("d")
+            assert await _wait(pilot, lambda: screen._deployments)
+            await pilot.press("e")
+            assert await _wait(pilot, lambda: not screen._is_expanded(job["8"]))
+            assert screen._is_expanded(job["7"])
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
 def test_an_empty_view_keeps_the_scope_s_words_and_the_widen_hint():
     from cortex_training.tui.account import ACCOUNT, SCHEMA, ListScope
 

@@ -899,9 +899,15 @@ class JobListScreen(FollowsPointer, Screen):
         with_subs = [j for j in self._in_view(self._all_jobs) if self._expandable(j)]
         # Every job folded, or every one unfolded: those listed since too; a fold or unfold
         # after it is the job's own.
-        self._all_folded = bool(with_subs) and all(self._is_expanded(j) for j in with_subs)
-        self._expanded.clear()
-        self._collapsed.clear()
+        folded = bool(with_subs) and all(self._is_expanded(j) for j in with_subs)
+        for job in self._all_jobs:
+            key = self._job_key(job)
+            if views.is_deployment(job) == self._deployments:
+                self._expanded.discard(key)
+                self._collapsed.discard(key)
+            elif self._expandable(job):  # the other view keeps its folds as they are
+                (self._expanded if self._is_expanded(job) else self._collapsed).add(key)
+        self._all_folded = folded
         self._render_jobs()
 
     def _settle_folds(self) -> None:
