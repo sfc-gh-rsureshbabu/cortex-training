@@ -631,7 +631,7 @@ def test_the_clipboard_file_takes_precedence_so_a_test_never_touches_the_real_on
 
 
 def test_a_drain_line_says_its_numbers():
-    entry = {"ts": "2026-06-12T00:00:01Z", "level": "INFO", "logger": "zones.server_head", "msg": "drain_metrics",
+    entry = {"ts": "2026-06-12T00:00:01Z", "level": "INFO", "logger": "app.server", "msg": "drain_metrics",
              "completed_requests": 16, "latency_s_p50": 0.05, "ttft_s_p99": 0.215, "replica_count": 2,
              "replica_errors": 1}
     assert format_log_entry(entry).endswith(
@@ -645,3 +645,14 @@ def test_a_quiet_drain_and_other_lines_stay_as_they_are():
     assert format_log_entry({"msg": "drain_metrics"}).endswith("drain_metrics")  # an older shape: no numbers
     assert format_log_entry({"msg": "hello", "completed_requests": 3}).endswith("hello")
     assert format_log_entry({"msg": "drain_metrics", "completed_requests": True}).endswith("drain_metrics")
+
+
+def test_a_drain_line_with_non_finite_numbers_does_not_crash():
+    # json.loads accepts NaN and Infinity, which int() refuses.
+    entry = json.loads('{"msg": "drain_metrics", "completed_requests": NaN, "replica_count": Infinity}')
+    assert format_log_entry(entry).endswith("drain_metrics")
+    entry = json.loads('{"msg": "drain_metrics", "completed_requests": 3, "latency_s_p50": NaN, '
+                       '"replica_count": Infinity, "replica_errors": -Infinity}')
+    assert format_log_entry(entry).endswith("drain_metrics  3 req")
+    entry = json.loads('{"msg": "drain_metrics", "completed_requests": 2, "replica_count": 1' + "0" * 400 + '}')
+    assert format_log_entry(entry).endswith("drain_metrics  2 req")

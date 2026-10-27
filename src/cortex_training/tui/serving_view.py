@@ -37,6 +37,13 @@ def _count(value: float | None) -> str:
     return "—" if value is None else f"{int(value)}"
 
 
+def _when(drained_at: float, tz=None) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(drained_at, tz=tz)
+    except (OverflowError, OSError, ValueError):  # finite, but past what a date holds
+        return None
+
+
 class ServingPane(_Pane):
     BINDINGS = [Binding("r", "refresh", "Refresh")]
 
@@ -113,8 +120,9 @@ class ServingPane(_Pane):
         if latest is not None:
             if latest.replicas is not None:
                 text.append(f"  ·  {latest.replicas} replica{'' if latest.replicas == 1 else 's'}", style=theme.MUTED)
-            at = datetime.fromtimestamp(latest.drained_at, tz=timezone.utc)
-            text.append(f"  ·  last drain {views.fmt_ago(at, datetime.now(timezone.utc))}", style=theme.MUTED)
+            at = _when(latest.drained_at, timezone.utc)
+            if at is not None:
+                text.append(f"  ·  last drain {views.fmt_ago(at, datetime.now(timezone.utc))}", style=theme.MUTED)
         if data.startup_s is not None:
             text.append(f"  ·  started in {views.fmt_duration(data.startup_s)}", style=theme.MUTED)
         if self._loading:
@@ -139,8 +147,9 @@ class ServingPane(_Pane):
             replicas = Text(_count(d.replicas))
             if errors:
                 replicas.append(f" ({errors} err)", style=theme.ERR)
+            at = _when(d.drained_at)
             table.add_row(
-                datetime.fromtimestamp(d.drained_at).strftime("%H:%M:%S"),
+                "—" if at is None else at.strftime("%H:%M:%S"),
                 "—" if r is None else f"{r:.2f}",
                 str(d.completed),
                 _seconds(d.latency_p50), _seconds(d.latency_p99),

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import re
 from datetime import datetime
 from datetime import timezone
@@ -32,7 +33,13 @@ from rich.cells import cell_len
 
 
 def _number(value: Any) -> float | None:
-    return None if isinstance(value, bool) or not isinstance(value, (int, float)) else value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:  # an int too big for a float
+        return None
+    return f if math.isfinite(f) else None  # json.loads reads NaN and Infinity
 
 
 def _drain_summary(entry: dict) -> str:

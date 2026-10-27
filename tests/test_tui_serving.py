@@ -112,6 +112,16 @@ def test_bytes_past_the_committed_size_wait_for_the_next_read(tmp_path, monkeypa
     assert [d.completed for d in reader.read().drains] == [1, 2]
 
 
+def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
+    from cortex_training.tui.serving_view import ServingPane
+
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: True)
+    pane._data = serving.ServingData([serving.parse_line(_drain(1e20, 2))])
+    assert "last drain" not in str(pane._status_text())
+    table = pane._table()
+    assert next(iter(table.columns[0].cells)) == "—"
+
+
 def test_serving_state():
     none, some = serving.ServingData(), serving.ServingData([serving.parse_line(_drain(0.0, 1))])
     assert serving.serving_state({"status": "PLACING"}, none) == "starting"
