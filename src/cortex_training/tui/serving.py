@@ -12,6 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
+import threading
 from typing import Any
 from typing import Optional
 
@@ -110,8 +111,13 @@ class ConsoleReader:
         self._offset = 0
         self._file: Optional[tuple] = None  # (st_dev, st_ino) the offset belongs to
         self._data = ServingData()
+        self._lock = threading.Lock()  # a cancelled worker's read can overlap the next one's
 
     def read(self) -> ServingData:
+        with self._lock:
+            return self._read()
+
+    def _read(self) -> ServingData:
         try:
             f = self._path.open("rb")
         except FileNotFoundError:

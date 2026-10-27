@@ -431,3 +431,68 @@ def test_a_reload_asked_for_while_one_runs_runs_once_after_it():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_a_queued_reload_still_loads_after_the_load_before_it_ends():
+    # The queued reload starts from the first load's _finish, which cancels that (exclusive) worker:
+    # its cleanup must not mark the queued one as done, or the next tick starts a third and cancels it.
+    import threading
+
+    c = _client(_deployment(), [_drain(0.0, 3)])
+    gates, calls = [threading.Event(), threading.Event()], []
+
+    def download(job_id, output_dir, **kwargs):
+        calls.append(1)
+        gates[min(len(calls), 2) - 1].wait(5)
+        return _console([_drain(0.0, 3), _drain(30.0, 6)])(job_id, output_dir, **kwargs)
+
+    c.download_stdout_logs.side_effect = download
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: len(calls) == 1 and pane._loading)
+            pane.reload()
+            gates[0].set()
+            assert await _wait(pilot, lambda: len(calls) == 2)
+            await pilot.pause(0.2)
+            assert pane._loading and "loading…" in _text(screen, "#serving-status")
+            pane.reload()  # r, while the queued load runs: queued again, not a third download now
+            await pilot.pause(0.2)
+            assert len(calls) == 2
+            gates[1].set()
+            assert await _wait(pilot, lambda: len(calls) == 3 and not pane._loading)
+            assert await _wait(pilot, lambda: len([ln for ln in _text(screen, "#serving-table").splitlines()
+                                                   if ":" in ln]) == 2)
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_two_reads_at_once_take_turns(tmp_path, monkeypatch):
+    import threading
+
+    path = tmp_path / "stdout.log"
+    path.write_text("".join(_drain(float(t), 1) + "\n" for t in range(50)))
+    reader = serving.ConsoleReader(path)
+    real, inside, overlapped = serving.parse_line, [0], []
+
+    def slow_parse(line):
+        inside[0] += 1
+        overlapped.append(inside[0] > 1)
+        threading.Event().wait(0.001)
+        inside[0] -= 1
+        return real(line)
+
+    monkeypatch.setattr(serving, "parse_line", slow_parse)
+    threads = [threading.Thread(target=reader.read) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not any(overlapped)
+    assert [d.drained_at for d in reader.read().drains] == [float(t) for t in range(50)]

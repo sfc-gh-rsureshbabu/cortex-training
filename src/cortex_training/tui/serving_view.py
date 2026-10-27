@@ -81,9 +81,16 @@ class ServingPane(_Pane):
     def _refresh(self) -> None:
         worker = get_current_worker()
         sid = views.deployment_sub_job_id(self._job())
+        finished = False
+
+        def finish(error: str | None) -> None:
+            nonlocal finished
+            finished = True
+            self._post(self._finish, error)
+
         try:
             if sid is None:
-                self._post(self._finish, None)
+                finish(None)
                 return
             if self._reader is None:
                 self._reader = serving.ConsoleReader(self._root / sid / "stdout.log")
@@ -92,14 +99,15 @@ class ServingPane(_Pane):
             if warnings is None or worker.is_cancelled:
                 return
             self._post(self._accept, self._reader.read(), warnings)
-            self._post(self._finish, None)
+            finish(None)
         except NoChunksError:  # nothing uploaded yet: a deployment that just started
-            self._post(self._finish, None)
+            finish(None)
         except Exception as exc:  # noqa: BLE001 - said in the tab's header
             if not worker.is_cancelled:
-                self._post(self._finish, views.access_hint(exc, "the serving metrics") or views.describe_error(exc))
+                finish(views.access_hint(exc, "the serving metrics") or views.describe_error(exc))
         finally:
-            if worker.is_cancelled:
+            # _finish may start the queued reload, which cancels this worker: that load is not ours to end.
+            if worker.is_cancelled and not finished:
                 self._post(self._cancelled)
 
     def _accept(self, data: serving.ServingData, warnings: list | None = None) -> None:
