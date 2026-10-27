@@ -22,8 +22,9 @@ from cortex_training.tui.saved_log import committed_size
 # Cheap substring checks before json.loads: most console lines are neither.
 _DRAIN_MARK = '"drain_metrics"'
 _STARTUP_MARK = '"job_metrics"'
-# A deployment drains every 30 s. A longer gap means a drain's line was lost (a skipped chunk, a
-# restart), and its requests with it: dividing what is left by the whole gap would read low.
+# A deployment drains every 30 s. Across a longer gap the rate is unknown: a drain that failed carries
+# its counts to the next, but one whose line was lost (a skipped chunk, a restart) takes its requests
+# with it, and dividing what is left by the whole gap would read low.
 _LONGEST_DRAIN_GAP_S = 45.0
 
 
