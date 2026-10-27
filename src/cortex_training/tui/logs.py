@@ -397,7 +397,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         return self._active_tab == "resource"
 
     def _detail_pane(self):
-        """The Training metrics or Serving tab's pane, when it is shown (see detail_tabs.py)."""
+        """The Training metrics or Serving tab's pane, when it is the active tab (see detail_tabs.py)."""
         if self._active_tab not in ("training", "serving"):
             return None
         try:
@@ -1890,13 +1890,10 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if self._resource_active():
             self._render_resource()
         if not views.is_live(self._tab_job()):
-            # Serving redraws only when it reloads, and the live refresh has stopped:
-            # one last read shows it ended, with the drains uploaded at the end.
-            try:
-                pane = self.query_one("#serving-tab", ServingPane)
-            except NoMatches:  # not mounted yet
-                return
-            if pane.shown:
+            # Serving redraws only when it reloads, and the live refresh has stopped: one last read
+            # shows it ended. Off screen, it reads again when it is next opened (ServingPane.activate).
+            pane = self._detail_pane()
+            if isinstance(pane, ServingPane) and pane.opened:
                 pane.reload()
 
     @staticmethod
@@ -1959,7 +1956,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if not self._live():
             # A deployment's drains go on while it is dropped, and are uploaded for a while after it ends.
             pane = self._detail_pane()
-            if (isinstance(pane, ServingPane) and pane.shown
+            if (isinstance(pane, ServingPane) and pane.opened
                     and (self._dropping()
                          or self._console_may_be_incomplete(self._active_seen_at, self._state_changed_at))):
                 pane.reload()

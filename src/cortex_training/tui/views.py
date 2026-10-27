@@ -334,7 +334,7 @@ def deployment_class(job: Any) -> str:
 
 
 def deployment_sub_job_id(job: Any) -> Optional[str]:
-    """The sub-job that serves the deployment; an UNKNOWN one's is derived as :func:`sub_jobs` does."""
+    """The sub-job that serves the deployment. An UNKNOWN job's is found the way :func:`sub_jobs` finds it."""
     if _model_deployment_sub_job(job) is None:
         return None
     sid = sub_jobs(job)[0].get("sub_job_id")
@@ -779,8 +779,8 @@ def refresh_job(current: Optional[dict], fresh: dict) -> dict:
 
 
 def keep_deployment(old: Any, fresh: dict) -> dict:
-    """``fresh``, still a deployment if ``old`` was one and ``fresh`` (an UNKNOWN answer, say)
-    has no sub-jobs: it gets ``old``'s, without their statuses, which are no longer known."""
+    """``fresh``, kept a deployment. When ``old`` was one and ``fresh`` has no sub-jobs (an UNKNOWN
+    answer, say), ``fresh`` gets ``old``'s sub-jobs without their statuses, which are no longer known."""
     if fresh.get("sub_jobs") or not is_deployment(old):
         return fresh
     return {**fresh, "sub_jobs": [{k: val for k, val in sj.items() if k != "status"} for sj in old["sub_jobs"]]}

@@ -77,9 +77,17 @@ class ServingPane(_Pane):
         return self.query_one("#serving-pane")
 
     # ── reading ──
+    def activate(self) -> None:
+        reopened = self.opened
+        super().activate()
+        if reopened and not views.is_live(self._job()):
+            # Drains upload after the end while only the tab on screen polls: read the newest. The download
+            # resumes, so this fetches only new chunks.
+            self.reload()
+
     def reload(self) -> None:
         if self._loading:
-            # The load running may have downloaded before what this one is for (the job's end).
+            # A load already running may have downloaded before the change this one is for (the job ending, say).
             self._reload_pending = True
             return
         self._loading = True
@@ -205,7 +213,7 @@ class ServingPane(_Pane):
             r = serving.rate(prev, d)
             errors = d.replica_errors or 0
             replicas = Text(_count(d.replicas))
-            if errors:
+            if errors > 0:
                 replicas.append(f" ({errors} err)", style=theme.ERR)
             at = _when(d.drained_at)
             table.add_row(

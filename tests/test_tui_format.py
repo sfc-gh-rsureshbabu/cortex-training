@@ -642,6 +642,7 @@ def test_a_quiet_drain_and_other_lines_stay_as_they_are():
     quiet = {"msg": "drain_metrics", "completed_requests": 0, "latency_s_p50": None, "replica_count": 1,
              "replica_errors": 0}
     assert format_log_entry(quiet).endswith("drain_metrics  0 req · 1 replica")
+    assert format_log_entry({**quiet, "replica_errors": -1}).endswith("drain_metrics  0 req · 1 replica")
     assert format_log_entry({"msg": "drain_metrics"}).endswith("drain_metrics")  # an older shape: no numbers
     assert format_log_entry({"msg": "hello", "completed_requests": 3}).endswith("hello")
     assert format_log_entry({"msg": "drain_metrics", "completed_requests": True}).endswith("drain_metrics")

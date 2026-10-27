@@ -58,8 +58,8 @@ class _Pane(Vertical):
         self._error: str | None = None
 
     @property
-    def shown(self) -> bool:
-        """Whether the tab was shown at least once (and so has loaded)."""
+    def opened(self) -> bool:
+        """Whether the tab was opened at least once (and so has loaded), not whether it is on screen now."""
         return self._shown
 
     def _post(self, fn, *args) -> None:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -170,6 +170,15 @@ def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     assert "last drain" not in str(pane._status_text())
     table = pane._table()
     assert next(iter(table.columns[0].cells)) == "—"
+
+
+def test_only_a_positive_replica_error_count_is_shown():
+    from cortex_training.tui.serving_view import ServingPane
+
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: [])
+    pane._data = serving.ServingData([serving.parse_line(_drain(1.0, 2, replica_errors=-1)),
+                                      serving.parse_line(_drain(31.0, 3, replica_errors=2))])
+    assert [str(cell) for cell in pane._table().columns[-1].cells] == ["1 (2 err)", "1"]
 
 
 def test_serving_rows_carry_their_date_unless_all_are_today_s():
@@ -470,13 +479,18 @@ def test_a_cancelled_serving_download_stops_at_its_next_chunk():
             def download(job_id, output_dir, *, on_chunk, **_kwargs):
                 for done in (1, 2):
                     chunks.append(done)
-                    closed[0] = True  # the screen closed while the first chunk came in
+                    closed[0] = True  # cancelled, or the screen closed, while the first chunk came in
                     on_chunk(DEPLOY, done, 2, 0)
                 return [{"sub_job_id": DEPLOY}]
 
             c.download_stdout_logs.side_effect = download
             assert screen._download_serving_console(sub_job_id=DEPLOY, cancelled=lambda: closed[0]) is None
             assert chunks == [1]
+            chunks.clear()
+            closed[0] = False
+            with patch.object(LogScreen, "_screen_open", new_callable=PropertyMock, side_effect=lambda: not closed[0]):
+                assert screen._download_serving_console(sub_job_id=DEPLOY, cancelled=lambda: False) is None
+            assert chunks == [1]  # the screen closed mid-download: stopped at its next chunk too
             await _settle(app, pilot)
 
     asyncio.run(run())
@@ -535,6 +549,35 @@ def test_a_broken_progress_count_does_not_fail_the_serving_download():
             assert screen._download_serving_console(sub_job_id=DEPLOY, cancelled=lambda: False,
                                                     progress=progress) == []
             assert calls == [(1, 2)]  # counted once, then no more
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_serving_reads_the_end_s_late_drains_when_it_is_opened_again():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("serving"))
+            await pilot.press("l")
+            calls = c.download_stdout_logs.call_count
+            pane = screen.query_one("#serving-tab")
+            c.get_job.return_value = _deployment("CANCELLED")
+            screen._fetch_status()
+            assert await _wait(pilot, lambda: screen._job_status == "CANCELLED")
+            await _settle(app, pilot)
+            assert not any(call.kwargs.get("sub_job_ids") == [DEPLOY] and call.args[1] == pane._root
+                           for call in c.download_stdout_logs.call_args_list[calls:])  # not off screen
+            c.download_stdout_logs.side_effect = _console([_drain(0.0, 3), _drain(30.0, 6)])  # uploaded late
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: len([ln for ln in _text(screen, "#serving-table").splitlines()
+                                                   if ":" in ln]) == 2)
+            assert _text(screen, "#serving-status").startswith("ended")
             await _settle(app, pilot)
 
     asyncio.run(run())
@@ -638,7 +681,7 @@ def test_a_training_job_that_ends_never_reads_a_console_for_serving():
             screen._fetch_status()
             assert await _wait(pilot, lambda: screen._job_status == "CANCELLED")
             await pilot.pause(0.1)
-            assert not pane.shown and not pane.reload.called
+            assert not pane.opened and not pane.reload.called
             # The Logs tab saves the ended job's console; nothing downloads into Serving's directory.
             assert not [call for call in c.download_stdout_logs.call_args_list
                         if str(screen._serving_root) in map(str, call.args)], c.download_stdout_logs.call_args_list

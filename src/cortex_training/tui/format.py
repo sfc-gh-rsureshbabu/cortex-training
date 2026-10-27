@@ -62,7 +62,7 @@ def _drain_summary(entry: dict) -> str:
     replicas, errors = finite_number(entry.get("replica_count")), finite_number(entry.get("replica_errors"))
     if replicas is not None:
         parts.append(f"{int(replicas)} replica{'' if replicas == 1 else 's'}")
-    if errors:
+    if errors is not None and errors > 0:
         parts.append(f"{int(errors)} replica error{'' if errors == 1 else 's'}")
     return " · ".join(parts)
 

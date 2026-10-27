@@ -95,7 +95,7 @@ def _startup(line: str) -> Optional[float]:
 
 class ConsoleReader:
     """A saved console (``stdout.log``) that a resumed download mostly appends to: each read parses
-    the whole lines added since the last one, so a deployment's days of console are parsed once.
+    the whole lines added since the last one, so while the job screen is open its console is parsed once.
     A console that was rebuilt or rewritten is read again from its start."""
 
     def __init__(self, path: Path) -> None:
