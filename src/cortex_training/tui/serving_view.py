@@ -24,6 +24,7 @@ from cortex_training.tui import serving
 from cortex_training.tui import theme
 from cortex_training.tui import views
 from cortex_training.tui.detail_tabs import _Pane
+from cortex_training.tui.format import local_time
 from cortex_training.tui.format import safe_text
 from cortex_training.tui.format import short_seconds
 from cortex_training.tui.widgets import _warning_text
@@ -155,7 +156,10 @@ class ServingPane(_Pane):
                 text.append(f"  ·  {latest.replicas} replica{'' if latest.replicas == 1 else 's'}", style=theme.MUTED)
             at = _when(latest.drained_at, timezone.utc)
             if at is not None:
-                text.append(f"  ·  last drain {views.fmt_ago(at, datetime.now(timezone.utc))}", style=theme.MUTED)
+                # Once the job has ended the pane stops redrawing, so an age would go stale.
+                when = (views.fmt_ago(at, datetime.now(timezone.utc)) if views.is_live(self._job())
+                        else f"at {local_time(at)}")
+                text.append(f"  ·  last drain {when}", style=theme.MUTED)
         if data.startup_s is not None:
             text.append(f"  ·  started in {views.fmt_duration(data.startup_s)}", style=theme.MUTED)
         if self._loading:

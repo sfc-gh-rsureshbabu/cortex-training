@@ -172,6 +172,20 @@ def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     assert next(iter(table.columns[0].cells)) == "—"
 
 
+def test_an_ended_deployment_s_last_drain_reads_as_a_time_not_an_age():
+    from datetime import datetime
+
+    from cortex_training.tui.serving_view import ServingPane
+
+    drained_at = datetime(2026, 10, 26, 19, 46).timestamp()
+    job = {"value": _deployment()}
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: job["value"], download=lambda **_: [])
+    pane._data = serving.ServingData([serving.parse_line(_drain(drained_at, 2))])
+    assert " ago" in str(pane._status_text())
+    job["value"] = _deployment("CANCELLED")  # the pane stops redrawing: an age would go stale
+    assert "last drain at 2026-10-26 19:46" in str(pane._status_text())
+
+
 def test_a_long_run_shows_its_newest_drains_and_says_so():
     from cortex_training.tui.serving_view import _MAX_ROWS
     from cortex_training.tui.serving_view import ServingPane

@@ -143,6 +143,10 @@ _CHIP_ORDER = ("running", "initializing", "placing", "pending", "unknown")
 _CHIP_OF = {"creating": "placing", "queued": "pending"}
 
 
+def _chip_rank(key: str) -> tuple:
+    return (_CHIP_ORDER.index(key) if key in _CHIP_ORDER else len(_CHIP_ORDER), key)
+
+
 def _status_chips(live: list, history: int, *, live_so_far: bool = False, unknown_so_far: bool = False,
                   history_so_far: bool = False) -> Content:
     """The counts on the line above the list, each live status as its glyph, count and
@@ -152,19 +156,22 @@ def _status_chips(live: list, history: int, *, live_so_far: bool = False, unknow
     active jobs are all listed, but no status filter lists an unknown job), the history
     (``history_so_far``)."""
     so_far = Content.styled(" so far", theme.FAINT)
-    counts = Counter(_CHIP_OF.get(key, key) for key in (theme.status_key(job.get("status")) for job in live))
-    words = {}  # a deployment's count says its status as its row does (ready, not running)
+    # A deployment counts under its status as its row says it (ready, not running); two
+    # statuses with one word (placing and initializing) share a chip, drawn as the first.
+    counts: Counter = Counter()
+    looks: dict = {}
     for job in live:
-        if views.is_deployment(job):
-            key = theme.status_key(job.get("status"))
-            words[_CHIP_OF.get(key, key)] = views.status_word_for(job, job.get("status"))
+        key = theme.status_key(job.get("status"))
+        key = _CHIP_OF.get(key, key)
+        word = views.status_word_for(job, job.get("status")) if views.is_deployment(job) else key
+        counts[word] += 1
+        looks[word] = min(looks.get(word, key), key, key=_chip_rank)
     chips = []
-    for key in [*_CHIP_ORDER, *sorted(set(counts) - set(_CHIP_ORDER))]:
-        if counts.get(key):
-            look = theme.status_look(key)
-            chips.append(Content.assemble((f"{look.glyph} ", look.color), (f"{counts[key]:,} ", f"bold {theme.TEXT}"),
-                                          (words.get(key, key), theme.MUTED),
-                                          so_far if key == "unknown" and unknown_so_far and not live_so_far else ""))
+    for word in sorted(counts, key=lambda w: _chip_rank(looks[w])):
+        look = theme.status_look(looks[word])
+        tail = so_far if looks[word] == "unknown" and unknown_so_far and not live_so_far else ""
+        chips.append(Content.assemble((f"{look.glyph} ", look.color), (f"{counts[word]:,} ", f"bold {theme.TEXT}"),
+                                      (word, theme.MUTED), tail))
     chips = chips or [Content.styled("no live jobs", theme.MUTED)]
     ended = Content.assemble("  ", ("│", theme.FAINT), "  ", (f"{history:,} ", f"bold {theme.TEXT}"),
                              ("in history", theme.MUTED))

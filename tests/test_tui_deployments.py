@@ -127,6 +127,11 @@ def test_a_deployment_s_count_and_sub_job_say_its_status_as_its_row_does():
     chips = str(_status_chips([_deployment(), _deployment("PENDING")], 0))
     assert "1 ready" in chips and "running" not in chips, chips
     assert "1 running" in str(_status_chips([_training()], 0))
+    # PLACING and INITIALIZING both read "initializing": one chip, whichever comes first.
+    for order in ((_deployment("PLACING"), _deployment("INITIALIZING")),
+                  (_deployment("INITIALIZING"), _deployment("PLACING"))):
+        chips = str(_status_chips(list(order), 0))
+        assert chips.count("initializing") == 1 and "2 initializing" in chips, chips
     screen = LogScreen(MagicMock(), "8", job=_deployment())
     assert str(screen._source_text(DEPLOY)).endswith("ready")
     assert str(LogScreen(MagicMock(), "7", job=_training())._source_text("7:training:0")).endswith("running")

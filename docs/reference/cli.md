@@ -1376,7 +1376,7 @@ its record says it is a deployment.
   refresh fetches only new chunks; about a minute behind live). The header says
   `starting`, `starting (no metrics yet)`, `serving`, `status unknown`, `dropping`
   or `ended` (`running` while a first read finds no drain yet), the replica count, how long
-  ago the last drain was, how long the deployment took to start, and the
+  ago the last drain was (once the job has ended, its time), how long the deployment took to start, and the
   download's warnings (skipped chunks, say). The table has one row per drain,
   newest first, for the newest 240 (about two hours; a note under it says when
   it leaves older ones out): requests per second, requests,
