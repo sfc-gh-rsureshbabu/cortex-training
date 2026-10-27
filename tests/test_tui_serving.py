@@ -181,8 +181,9 @@ def test_open_by_id_switches_to_deployment_tabs():
             assert c.download_stdout_logs.call_args.kwargs["resume"] is True
             table = _text(screen, "#serving-table")
             rows = [line for line in table.splitlines() if ":" in line]  # the drain rows start with a time
-            assert "0.50" in rows[0] and "15" in rows[0]  # newest first: 15 requests over 30 s
-            assert "—" in rows[1]  # the first drain has no rate
+            # Time, req/s, Requests, ...: newest first, 15 requests over 30 s; the first drain has no rate.
+            assert rows[0].split()[1:3] == ["0.50", "15"]
+            assert rows[1].split()[1:3] == ["—", "0"]
             await _settle(app, pilot)
 
     asyncio.run(run())
@@ -233,7 +234,10 @@ def test_no_console_yet_is_not_an_error_and_a_failure_says_so():
             screen = await _open(app, pilot)
             assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
             await pilot.press("v")
-            assert await _wait(pilot, lambda: "starting (no metrics yet)" in _text(screen, "#serving-status"))
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: c.download_stdout_logs.called and not pane._loading)
+            status = _text(screen, "#serving-status")
+            assert "starting (no metrics yet)" in status and "[error]" not in status
             c.download_stdout_logs.side_effect = RuntimeError("boom")
             await pilot.press("r")
             assert await _wait(pilot, lambda: "boom" in _text(screen, "#serving-status"))
@@ -252,7 +256,8 @@ def test_an_ended_deployment_reads_ended_with_its_rows():
             assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
             await pilot.press("v")
             assert await _wait(pilot, lambda: "ended" in _text(screen, "#serving-status"))
-            assert "3" in _text(screen, "#serving-table")
+            rows = [line for line in _text(screen, "#serving-table").splitlines() if ":" in line]
+            assert len(rows) == 1 and rows[0].split()[2] == "3"  # Time, req/s, Requests
             await _settle(app, pilot)
 
     asyncio.run(run())
