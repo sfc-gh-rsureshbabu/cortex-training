@@ -39,6 +39,12 @@ def _count(value: float | None) -> str:
     return "—" if value is None else f"{int(value)}"
 
 
+def _kv(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return "<0.1%" if 0 < value < 0.0005 else f"{value:.1%}"  # a light load sits well under 1%
+
+
 def _when(drained_at: float, tz=None) -> datetime | None:
     try:
         return datetime.fromtimestamp(drained_at, tz=tz)
@@ -58,6 +64,7 @@ class ServingPane(_Pane):
         self._data = serving.ServingData()
         self._warnings: list = []  # the last download's, shown in the header
         self._reload_pending = False  # asked for while a load ran: one more once it finishes
+        self._read = False  # a load has finished: no drain since says there is none yet
 
     def compose(self) -> ComposeResult:
         yield Static("", id="serving-status")
@@ -118,6 +125,7 @@ class ServingPane(_Pane):
 
     def _finish(self, error: str | None) -> None:
         self._loading = False
+        self._read = True
         self._error = error  # rows already shown stay
         if self._reload_pending:
             self._reload_pending = False
@@ -130,6 +138,9 @@ class ServingPane(_Pane):
         self._reload_pending = False
 
     # ── drawing ──
+    def _first_read(self) -> bool:
+        return self._loading and not self._read
+
     def redraw(self) -> None:
         if not self.is_attached:
             return
@@ -138,7 +149,7 @@ class ServingPane(_Pane):
 
     def _status_text(self) -> Text:
         data, latest = self._data, self._data.latest
-        text = Text(serving.serving_state(self._job(), data, reading=self._loading), style="bold")
+        text = Text(serving.serving_state(self._job(), data, reading=self._first_read()), style="bold")
         if latest is not None:
             if latest.replicas is not None:
                 text.append(f"  ·  {latest.replicas} replica{'' if latest.replicas == 1 else 's'}", style=theme.MUTED)
@@ -157,7 +168,7 @@ class ServingPane(_Pane):
 
     def _table(self):
         drains = self._data.drains
-        if not drains and self._loading:
+        if not drains and self._first_read():
             return Text("Reading the console…", style=theme.MUTED)
         if not drains:
             return Text("No drain_metrics yet: a deployment writes one every 30 s once it serves.", style=theme.MUTED)
@@ -183,7 +194,7 @@ class ServingPane(_Pane):
                 _seconds(d.latency_p50), _seconds(d.latency_p99),
                 _seconds(d.ttft_p50), _seconds(d.ttft_p99), _seconds(d.queue_p99),
                 f"{_count(d.running)}/{_count(d.waiting)}",
-                "—" if d.kv_max is None else f"{d.kv_max:.1%}",  # one decimal: a light load sits well under 1%
+                _kv(d.kv_max),
                 replicas,
             )
         return table

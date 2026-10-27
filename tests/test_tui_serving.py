@@ -205,7 +205,9 @@ def test_a_first_load_says_it_reads_the_console_rather_than_no_metrics():
     status, table = str(pane._status_text()), str(pane._table())
     assert "no metrics" not in status and "No drain_metrics" not in table, (status, table)
     assert "Reading the console" in table
-    pane._loading = False
+    pane._finish(None)
+    assert "no metrics yet" in str(pane._status_text()) and "No drain_metrics yet" in str(pane._table())
+    pane._loading = True  # a later reload still finds none: the header stays as it was
     assert "no metrics yet" in str(pane._status_text()) and "No drain_metrics yet" in str(pane._table())
 
 
@@ -421,6 +423,82 @@ def test_a_deployment_that_ends_on_the_serving_tab_reads_ended_with_its_last_dra
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_a_dropping_deployment_is_checked_until_it_is_dropped():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("serving"))
+            c.get_job.return_value = _deployment("CANCELLING")
+            screen._fetch_status()
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("dropping"))
+            c.get_job.return_value = _deployment("CANCELLED")
+            screen._refresh_status()  # the status check still runs: CANCELLING is not the end
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("ended"))
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_serving_reads_again_while_the_last_drains_may_still_upload():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("serving"))
+            c.get_job.return_value = _deployment("CANCELLED")
+            screen._fetch_status()
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("ended"))
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: not pane._loading)
+            c.download_stdout_logs.side_effect = _console([_drain(0.0, 3), _drain(30.0, 6)])  # a chunk uploaded late
+            screen._auto_refresh_data()  # the 30 s tick, minutes after the end
+            assert await _wait(pilot, lambda: len([ln for ln in _text(screen, "#serving-table").splitlines()
+                                                   if ":" in ln]) == 2)
+            screen._active_seen_at = None
+            screen._state_changed_at = "2020-01-01T00:00:00Z"  # long ended: nothing more can come
+            pane.reload = MagicMock()
+            screen._auto_refresh_data()
+            assert not pane.reload.called
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_an_answer_without_sub_jobs_keeps_a_deployment_s_tabs():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            c.get_job.return_value = {"job_id": "8", "status": "UNKNOWN", "reason_details": "no answer"}
+            screen._fetch_status()
+            assert await _wait(pilot, lambda: screen._job_status == "UNKNOWN")
+            await pilot.pause(0.05)
+            assert "serving" in _visible_tabs(screen) and "training" not in _visible_tabs(screen)
+            assert screen._active_tab == "serving"
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_tiny_kv_cache_use_reads_as_under_a_tenth_of_a_percent():
+    from cortex_training.tui.serving_view import _kv
+
+    assert _kv(2.6e-05) == "<0.1%" and _kv(0.0) == "0.0%" and _kv(0.123) == "12.3%" and _kv(None) == "—"
 
 
 def test_a_training_job_that_ends_never_reads_a_console_for_serving():

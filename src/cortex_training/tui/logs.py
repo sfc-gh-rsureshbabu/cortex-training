@@ -406,7 +406,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
             return None
 
     def _tab_job(self) -> dict:
-        """The job as this screen knows it, with its newest status, for the Training metrics tab."""
+        """The job as this screen knows it, with its newest status, for the Training metrics and Serving tabs."""
         return {**self._job, "status": self._job_status or self._job.get("status")}
 
     def _warm_up(self) -> None:
@@ -1891,9 +1891,13 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
     def _live(self) -> bool:
         return views.is_live(self._ended_job())
 
+    def _dropping(self) -> bool:
+        """A deployment being dropped: not live, but its status still changes to the end."""
+        return views.is_deployment(self._job) and views.status_word(self._job_status) == "cancelling"
+
     def _refresh_status(self) -> None:
         # The tail pauses off the Logs tab, so it can't be what notices the job ending.
-        if self.app.screen is self and self._live():
+        if self.app.screen is self and (self._live() or self._dropping()):
             self._fetch_status()
 
     @work(thread=True, exclusive=True, group="status")
@@ -1929,7 +1933,14 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
     def _auto_refresh_data(self) -> None:
         # Only the visible tab polls, and only while the job is live. Resources waits
         # until the status check sees the shown sub-job running: before that it has no samples.
-        if self.app.screen is not self or not self._live():
+        if self.app.screen is not self:
+            return
+        if not self._live():
+            # A deployment's last drains are uploaded for a while after it ends.
+            pane = self._detail_pane()
+            if (isinstance(pane, ServingPane) and pane.shown
+                    and self._console_may_be_incomplete(self._active_seen_at, self._state_changed_at)):
+                pane.reload()
             return
         if self._resource_active() and self._resource_waiting() is None:
             self._start_resource_refresh(force=True)

@@ -1250,7 +1250,8 @@ For a training or sampling job, `l`, `g`, `m` and `c` open Logs, Resources,
 Training metrics and Checkpoints directly.
 A deployment's preview adds its class, replicas, idle timeout (`off` when it is
 never reclaimed), the deployment ID to call it by (`Call as`, the same ID `ct`
-shows) and the base URL of deployments in the job's schema. Its keys are `v` Serving, `l` Logs and `g` Resources.
+shows) and the base URL of deployments in the job's schema. Its keys are `v`
+Serving, `l` Logs and `g` Resources.
 
 #### Job details
 
@@ -1286,8 +1287,7 @@ its record says it is a deployment.
   time. `Space` (or a click on its name) shows the next one; `<` and `>` go
   back and forth. Its pinned header names the sub-job, position,
   window, sample age and scrape interval while the stats and charts scroll: two
-  lines, and for a deployment a third, that its GPU memory is reserved up front
-  for serving.
+  lines, and three for a deployment (see below).
   - The focused left panel switches between `GPU Resources` and `System
     Resources`, then `ALL` (the mean) and each GPU or node. `↑`, `↓` or a click
     selects an entry. Each unit shows its latest utilization after a four-cell
@@ -1381,8 +1381,8 @@ its record says it is a deployment.
   it leaves older ones out): requests per second, requests,
   latency and time-to-first-token p50/p99, queue p99, running and waiting
   requests, the highest KV cache use, and replicas (with their errors, when any).
-  It refreshes with the job while the tab is shown, and once more when the job
-  ends, for its last drains; `r` refreshes it now.
+  It refreshes with the job while the tab is shown, and for ten minutes after
+  the job ends, while its last drains are uploaded; `r` refreshes it now.
 - **Training metrics** charts what the training sub-job's `/step` and
   `/fwd-bwd` calls returned, read from its own `training.jsonl`
   ([Training metrics download](rest-api.md#125-training-metrics-download)),
