@@ -54,6 +54,7 @@ class ServingPane(_Pane):
         self._download = download
         self._reader: serving.ConsoleReader | None = None
         self._data = serving.ServingData()
+        self._reload_pending = False  # asked for while a load ran: one more once it finishes
 
     def compose(self) -> ComposeResult:
         yield Static("", id="serving-status")
@@ -66,6 +67,8 @@ class ServingPane(_Pane):
     # ── reading ──
     def reload(self) -> None:
         if self._loading:
+            # The load running may have downloaded before what this one is for (the job's end).
+            self._reload_pending = True
             return
         self._loading = True
         self.redraw()
@@ -102,10 +105,15 @@ class ServingPane(_Pane):
     def _finish(self, error: str | None) -> None:
         self._loading = False
         self._error = error  # rows already shown stay
-        self.redraw()
+        if self._reload_pending:
+            self._reload_pending = False
+            self.reload()
+        else:
+            self.redraw()
 
     def _cancelled(self) -> None:
         self._loading = False
+        self._reload_pending = False
 
     # ── drawing ──
     def redraw(self) -> None:

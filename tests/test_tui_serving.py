@@ -336,3 +336,38 @@ def test_a_training_job_that_ends_never_reads_a_console_for_serving():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_a_reload_asked_for_while_one_runs_runs_once_after_it():
+    import threading
+
+    c = _client(_deployment(), [_drain(0.0, 3)])
+    gate, calls = threading.Event(), []
+    lines = [[_drain(0.0, 3)], [_drain(0.0, 3), _drain(30.0, 6)]]
+
+    def download(job_id, output_dir, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            gate.wait(5)
+        return _console(lines[min(len(calls), 2) - 1])(job_id, output_dir, **kwargs)
+
+    c.download_stdout_logs.side_effect = download
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: len(calls) == 1 and pane._loading)
+            pane.reload()  # the 30 s refresh, say, while the first load runs
+            gate.set()
+            assert await _wait(pilot, lambda: len(calls) == 2 and not pane._loading)
+            assert await _wait(pilot, lambda: len([ln for ln in _text(screen, "#serving-table").splitlines()
+                                                   if ":" in ln]) == 2)
+            await pilot.pause(0.2)
+            assert len(calls) == 2  # once, not a loop
+            await _settle(app, pilot)
+
+    asyncio.run(run())
