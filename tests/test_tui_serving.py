@@ -182,11 +182,16 @@ def test_only_a_positive_replica_error_count_is_shown():
 
 
 def test_serving_rows_carry_their_date_unless_all_are_today_s():
+    import time
     from datetime import datetime
+    from datetime import timedelta
 
     from cortex_training.tui.serving_view import ServingPane
 
     now = datetime.now().replace(microsecond=0)
+    if now.date() != (now + timedelta(seconds=5)).date():
+        time.sleep(6)  # the pane reads the clock too: not across midnight
+        now = datetime.now().replace(microsecond=0)
     pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: [])
     pane._data = serving.ServingData([serving.parse_line(_drain(now.timestamp(), 2))])
     assert list(pane._table().columns[0].cells) == [now.strftime("%H:%M:%S")]
@@ -581,6 +586,31 @@ def test_serving_reads_the_end_s_late_drains_when_it_is_opened_again():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_serving_reads_again_when_opened_again_only_while_drains_may_arrive():
+    def serving_reads(c, pane):
+        return sum(call.kwargs.get("sub_job_ids") == [DEPLOY] and call.args[1] == pane._root
+                   for call in c.download_stdout_logs.call_args_list)
+
+    async def run(status):
+        c = _client(_deployment(status), [_drain(0.0, 3)])
+        app = CortexTrainingLogTUI(c, "8", poll_interval=60)  # no poll: only opening the tab reads
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: serving_reads(c, pane) == 1 and not pane._loading)
+            await pilot.press("l")
+            await pilot.press("v")
+            await _wait(pilot, lambda: serving_reads(c, pane) > 1, tries=50)
+            reads = serving_reads(c, pane)
+            await _settle(app, pilot)
+            return reads
+
+    assert asyncio.run(run("RUNNING")) == 2
+    assert asyncio.run(run("CANCELLED")) == 1  # ended long ago (no end time): no drain can still arrive
 
 
 def test_a_dropping_deployment_is_checked_until_it_is_dropped():

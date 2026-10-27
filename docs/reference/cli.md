@@ -1251,9 +1251,9 @@ For a training or sampling job, `l`, `g`, `m` and `c` open Logs, Resources,
 Training metrics and Checkpoints directly.
 A deployment's preview adds its class, replicas, idle timeout (`off` when it is
 never reclaimed, `server default` when the job sets none), the deployment ID to
-call it by (`Call as`, the same ID `ct` shows) and the base URL of deployments
-in the job's schema. Its keys are `v`
-Serving, `l` Logs and `g` Resources.
+call it by (`Call as`, the same ID `ct` shows) and, unless it failed, is
+dropping or dropped, or was terminated, the base URL of deployments in the
+job's schema. Its keys are `v` Serving, `l` Logs and `g` Resources.
 
 #### Job details
 
@@ -1386,10 +1386,10 @@ its record says it is a deployment.
   it leaves older ones out): its time (`HH:MM:SS` in local time, with the date
   first unless every row is today's), requests per second, requests, latency
   and time-to-first-token p50/p99, queue p99, running and waiting requests, the
-  highest KV cache use, and replicas (with their errors, when any). It
-  refreshes with the job while the tab is shown, while the deployment is
-  dropping, and for ten minutes after it ends, while its last drains are
-  uploaded; `r` refreshes it now.
+  highest KV cache use, and replicas (with their errors, when any). While the
+  tab is shown it refreshes with the job, while the deployment is dropping, and
+  for ten minutes after it ends, while its last drains are uploaded; in that
+  time it also reads again when you return to it. `r` refreshes it now.
 - **Training metrics** charts what the training sub-job's `/step` and
   `/fwd-bwd` calls returned, read from its own `training.jsonl`
   ([Training metrics download](rest-api.md#125-training-metrics-download)),

@@ -539,7 +539,12 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
             self._log_focus_id = focused.id
         pane = self._detail_pane()
         if pane is not None:
+            reopened = isinstance(pane, ServingPane) and pane.opened
             pane.activate()  # it claims the focus itself (see detail_tabs.claim_focus)
+            if reopened and self._serving_may_change():
+                # Only the tab on screen polls, so drains may have arrived while it was off screen. The
+                # download resumes: this fetches only new chunks.
+                pane.reload()
             return
         if self._resource_active():
             self.set_focus(self.query_one("#resource-list", ListView))  # its arrows pick a view or unit
@@ -1913,6 +1918,11 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         """A deployment being dropped: not live, but its status still changes to the end."""
         return views.is_deployment(self._job) and views.status_word(self._job_status) == "cancelling"
 
+    def _serving_may_change(self) -> bool:
+        """New drains may still arrive: the job is live or dropping, or ended before its last could upload."""
+        return (self._live() or self._dropping()
+                or self._console_may_be_incomplete(self._active_seen_at, self._state_changed_at))
+
     def _refresh_status(self) -> None:
         # The tail pauses off the Logs tab, so it can't be what notices the job ending.
         if self.app.screen is self and (self._live() or self._dropping()):
@@ -1956,9 +1966,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if not self._live():
             # A deployment's drains go on while it is dropped, and are uploaded for a while after it ends.
             pane = self._detail_pane()
-            if (isinstance(pane, ServingPane) and pane.opened
-                    and (self._dropping()
-                         or self._console_may_be_incomplete(self._active_seen_at, self._state_changed_at))):
+            if isinstance(pane, ServingPane) and pane.opened and self._serving_may_change():
                 pane.reload()
             return
         if self._resource_active() and self._resource_waiting() is None:

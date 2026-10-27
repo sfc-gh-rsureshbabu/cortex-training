@@ -77,14 +77,6 @@ class ServingPane(_Pane):
         return self.query_one("#serving-pane")
 
     # ── reading ──
-    def activate(self) -> None:
-        reopened = self.opened
-        super().activate()
-        if reopened and not views.is_live(self._job()):
-            # Drains upload after the end while only the tab on screen polls: read the newest. The download
-            # resumes, so this fetches only new chunks.
-            self.reload()
-
     def reload(self) -> None:
         if self._loading:
             # A load already running may have downloaded before the change this one is for (the job ending, say).
