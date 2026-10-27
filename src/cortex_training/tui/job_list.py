@@ -599,7 +599,7 @@ class JobListScreen(FollowsPointer, Screen):
             # holds no other, so the header must not claim it covered every schema.
             only = ""
         else:
-            labels = {views.location_label(job) for job in self._all_jobs}
+            labels = {views.location_label(job) for job in self._in_view(self._all_jobs)}
             only = next(iter(labels)) if len(labels) == 1 else ""
         return scope_text(self._scope, location=self._schema_label(), only=only)
 
@@ -896,7 +896,7 @@ class JobListScreen(FollowsPointer, Screen):
         return True
 
     def action_expand_all(self) -> None:
-        with_subs = [j for j in self._all_jobs if self._expandable(j)]
+        with_subs = [j for j in self._in_view(self._all_jobs) if self._expandable(j)]
         # Every job folded, or every one unfolded: those listed since too; a fold or unfold
         # after it is the job's own.
         self._all_folded = bool(with_subs) and all(self._is_expanded(j) for j in with_subs)
@@ -1522,22 +1522,22 @@ class JobListScreen(FollowsPointer, Screen):
                              location=self._schema_label() if one else "", widen=widen, narrow=narrow,
                              everything=everything, elsewhere=elsewhere)
                 message = views.no_match_message(self._filter, query, len(recent), **found)
-            elif others or (self._scope is not None and self._scope.truncated):
+            else:
+                what = "jobs"
+                if others:
+                    what = "deployments" if self._deployments else "training or sampling jobs"
                 if self._scope is not None and self._scope.truncated:
                     message = empty_text(self._scope)
+                elif self._scope is not None and self._scope.kind == ACCOUNT:
+                    where = f"in {self._scope.narrowed}" if self._scope.narrowed else "in any database and schema"
+                    message = f"No {what} created in the last 6 months that this role can see, {where}."
                 else:
-                    what = "deployments" if self._deployments else "training or sampling jobs"
-                    message = f"No {what} created in the last 6 months."
+                    message = f"No {what} created in the last 6 months in {self._schema_label()} that this role can see."
+                    if widen:
+                        message += "\n  a lists every database and schema."
                 if others:
                     other = "job" if self._deployments else "deployment"
                     message += f"\n  d shows the {others:,} {other}{'' if others == 1 else 's'}."
-            elif self._scope is not None and self._scope.kind == ACCOUNT:
-                where = f"in {self._scope.narrowed}" if self._scope.narrowed else "in any database and schema"
-                message = f"No jobs created in the last 6 months that this role can see, {where}."
-            else:
-                message = f"No jobs created in the last 6 months in {self._schema_label()} that this role can see."
-                if widen:
-                    message += "\n  a lists every database and schema."
             self._hide_table(table, layout, message)
             return
         self._show_nomatch(None)

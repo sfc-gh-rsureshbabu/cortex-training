@@ -276,3 +276,71 @@ def test_a_search_that_matches_only_the_other_view_points_to_it():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def _located(job, db, schema):
+    return {**job, "database_name": db, "schema_name": schema}
+
+
+def test_the_all_in_hint_names_the_location_of_the_view_on_screen():
+    from cortex_training.tui.account import ACCOUNT, ListScope
+
+    c = _client([_training(), _deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            screen._scope = ListScope(ACCOUNT)
+            screen._all_jobs = [_located(_training(), "DB", "B"), _located(_deployment(), "DB", "A")]
+            assert screen._scope_text() == "all schemas (all in DB.B)"
+            await pilot.press("d")
+            assert await _wait(pilot, lambda: screen._deployments)
+            assert screen._scope_text() == "all schemas (all in DB.A)"
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_e_folds_when_every_job_in_the_view_is_unfolded():
+    c = _client([_training(), _deployment("CANCELLED")])  # the ended deployment starts folded
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            training = screen._jobs_by_key[next(k for k, j in screen._jobs_by_key.items() if j["job_id"] == "7")]
+            assert screen._is_expanded(training)
+            await pilot.press("e")
+            assert await _wait(pilot, lambda: not screen._is_expanded(training))
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_an_empty_view_keeps_the_scope_s_words_and_the_widen_hint():
+    from cortex_training.tui.account import ACCOUNT, SCHEMA, ListScope
+
+    c = _client([_deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._nomatch)
+            screen = app.screen
+            screen._scope = ListScope(SCHEMA)
+            screen._render_jobs()
+            said = screen._nomatch
+            assert said.startswith("No training or sampling jobs created in the last 6 months in "), said
+            assert "that this role can see." in said and "\n  a lists every database and schema." in said, said
+            assert said.endswith("\n  d shows the 1 deployment."), said
+            screen._scope = ListScope(ACCOUNT)
+            screen._render_jobs()
+            said = screen._nomatch
+            assert "that this role can see, in any database and schema." in said, said
+            assert said.endswith("\n  d shows the 1 deployment."), said
+            await _settle(app, pilot)
+
+    asyncio.run(run())
