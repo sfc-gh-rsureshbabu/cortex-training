@@ -1388,8 +1388,9 @@ its record says it is a deployment.
   and time-to-first-token p50/p99, queue p99, running and waiting requests, the
   highest KV cache use, and replicas (with their errors, when any). While the
   tab is shown it refreshes with the job, while the deployment is dropping, and
-  for ten minutes after it ends, while its last drains are uploaded; in that
-  time it also reads again when you return to it. `r` refreshes it now.
+  for ten minutes after it ends, while its last drains are uploaded. In that
+  time, or when the job's status changed since its last read, it also reads
+  again when you return to it. `r` refreshes it now.
 - **Training metrics** charts what the training sub-job's `/step` and
   `/fwd-bwd` calls returned, read from its own `training.jsonl`
   ([Training metrics download](rest-api.md#125-training-metrics-download)),

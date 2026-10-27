@@ -67,6 +67,7 @@ class ServingPane(_Pane):
         self._reload_pending = False  # asked for while a load ran: one more once it finishes
         self._read = False  # a load has finished: no drain since says there is none yet
         self._chunks: tuple[int, int] | None = None  # the running download's (done, total)
+        self._read_status: str | None = None  # the job's status when the last finished load began
 
     def compose(self) -> ComposeResult:
         yield Static("", id="serving-status")
@@ -89,13 +90,14 @@ class ServingPane(_Pane):
     @work(thread=True, exclusive=True, group="serving")
     def _refresh(self) -> None:
         worker = get_current_worker()
-        sid = views.deployment_sub_job_id(self._job())
+        job = self._job()
+        sid = views.deployment_sub_job_id(job)
         finished = False
 
         def finish(error: str | None) -> None:
             nonlocal finished
             finished = True
-            self._post(self._finish, error)
+            self._post(self._finish, error, job.get("status"))
 
         try:
             if sid is None:
@@ -130,16 +132,22 @@ class ServingPane(_Pane):
         self._chunks = (done, total)
         self.query_one("#serving-status", Static).update(self._status_text())
 
-    def _finish(self, error: str | None) -> None:
+    def _finish(self, error: str | None, status: str | None) -> None:
         self._loading = False
         self._chunks = None
         self._read = True
+        self._read_status = status
         self._error = error  # rows already shown stay
         if self._reload_pending:
             self._reload_pending = False
             self.reload()
         else:
             self.redraw()
+
+    @property
+    def status_changed_since_read(self) -> bool:
+        """The job's status changed after the last finished load began: it may have missed the job ending."""
+        return self._read and self._read_status != self._job().get("status")
 
     def _cancelled(self) -> None:
         self._loading = False

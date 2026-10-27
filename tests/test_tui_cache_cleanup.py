@@ -480,10 +480,11 @@ def test_a_job_open_in_a_running_tui_is_never_removed(tmp_path):
     assert open_job.exists()
 
 
-def test_a_job_being_downloaded_is_never_removed(tmp_path):
+@pytest.mark.parametrize("part", ["metrics", "serving"])
+def test_a_job_being_downloaded_is_never_removed(tmp_path, part):
     busy = _job(tmp_path, "busy", mib=3, age=5000)
     newer = _job(tmp_path, "newer", mib=3, age=1000)
-    lock = DownloadLock(busy / "metrics")
+    lock = DownloadLock(busy / part)
     assert lock.try_acquire()
     try:
         # 6 MiB over a 4 MiB limit: busy is skipped because of its download lock, so newer goes.

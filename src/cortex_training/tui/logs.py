@@ -541,9 +541,9 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if pane is not None:
             reopened = isinstance(pane, ServingPane) and pane.opened
             pane.activate()  # it claims the focus itself (see detail_tabs.claim_focus)
-            if reopened and self._serving_may_change():
-                # Only the tab on screen polls, so drains may have arrived while it was off screen. The
-                # download resumes: this fetches only new chunks.
+            if reopened and (self._serving_may_change() or pane.status_changed_since_read):
+                # Only the tab on screen polls, so drains (or the job's end) may have come while it was off
+                # screen. The download resumes: this fetches only new chunks.
                 pane.reload()
             return
         if self._resource_active():
@@ -1896,7 +1896,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
             self._render_resource()
         if not views.is_live(self._tab_job()):
             # Serving redraws only when it reloads, and the live refresh has stopped: one last read
-            # shows it ended. Off screen, it reads again when it is next opened (ServingPane.activate).
+            # shows it ended. Off screen, it reads again when it is next opened (on_tabbed_content_tab_activated).
             pane = self._detail_pane()
             if isinstance(pane, ServingPane) and pane.opened:
                 pane.reload()

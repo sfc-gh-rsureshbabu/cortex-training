@@ -251,7 +251,7 @@ def test_a_first_load_says_it_reads_the_console_rather_than_no_metrics():
     status, table = str(pane._status_text()), str(pane._table())
     assert "no metrics" not in status and "No drain_metrics" not in table, (status, table)
     assert "Reading the console" in table
-    pane._finish(None)
+    pane._finish(None, "RUNNING")
     assert "no metrics yet" in str(pane._status_text()) and "No drain_metrics yet" in str(pane._table())
     pane._loading = True  # a later reload still finds none: the header stays as it was
     assert "no metrics yet" in str(pane._status_text()) and "No drain_metrics yet" in str(pane._table())
@@ -559,8 +559,13 @@ def test_a_broken_progress_count_does_not_fail_the_serving_download():
     asyncio.run(run())
 
 
-def test_serving_reads_the_end_s_late_drains_when_it_is_opened_again():
+@pytest.mark.parametrize("long_after", [False, True])
+def test_serving_reads_the_end_s_late_drains_when_it_is_opened_again(long_after):
     c = _client(_deployment(), [_drain(0.0, 3)])
+
+    def serving_reads(pane):
+        return sum(call.kwargs.get("sub_job_ids") == [DEPLOY] and call.args[1] == pane._root
+                   for call in c.download_stdout_logs.call_args_list)
 
     async def run():
         app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
@@ -579,10 +584,20 @@ def test_serving_reads_the_end_s_late_drains_when_it_is_opened_again():
             assert not any(call.kwargs.get("sub_job_ids") == [DEPLOY] and call.args[1] == pane._root
                            for call in c.download_stdout_logs.call_args_list[calls:])  # not off screen
             c.download_stdout_logs.side_effect = _console([_drain(0.0, 3), _drain(30.0, 6)])  # uploaded late
+            if long_after:  # back past the upload window: the end is still read once
+                screen._active_seen_at = None
+                screen._state_changed_at = "2020-01-01T00:00:00Z"
             await pilot.press("v")
             assert await _wait(pilot, lambda: len([ln for ln in _text(screen, "#serving-table").splitlines()
                                                    if ":" in ln]) == 2)
             assert _text(screen, "#serving-status").startswith("ended")
+            if long_after:
+                assert await _wait(pilot, lambda: not pane._loading)
+                reads = serving_reads(pane)
+                await pilot.press("l")
+                await pilot.press("v")
+                await _wait(pilot, lambda: serving_reads(pane) > reads, tries=50)
+                assert serving_reads(pane) == reads  # and only once
             await _settle(app, pilot)
 
     asyncio.run(run())
@@ -593,8 +608,8 @@ def test_serving_reads_again_when_opened_again_only_while_drains_may_arrive():
         return sum(call.kwargs.get("sub_job_ids") == [DEPLOY] and call.args[1] == pane._root
                    for call in c.download_stdout_logs.call_args_list)
 
-    async def run(status):
-        c = _client(_deployment(status), [_drain(0.0, 3)])
+    async def run(job):
+        c = _client(job, [_drain(0.0, 3)])
         app = CortexTrainingLogTUI(c, "8", poll_interval=60)  # no poll: only opening the tab reads
         async with app.run_test(size=(140, 40)) as pilot:
             screen = await _open(app, pilot)
@@ -609,8 +624,9 @@ def test_serving_reads_again_when_opened_again_only_while_drains_may_arrive():
             await _settle(app, pilot)
             return reads
 
-    assert asyncio.run(run("RUNNING")) == 2
-    assert asyncio.run(run("CANCELLED")) == 1  # ended long ago (no end time): no drain can still arrive
+    assert asyncio.run(run(_deployment())) == 2
+    long_ago = {**_deployment("CANCELLED"), "state_changed_at": "2020-01-01T00:00:00Z"}
+    assert asyncio.run(run(long_ago)) == 1  # no drain can still arrive
 
 
 def test_a_dropping_deployment_is_checked_until_it_is_dropped():
