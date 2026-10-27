@@ -37,6 +37,9 @@ from typing import Optional
 import requests
 from rich.cells import cell_len
 
+from cortex_training.client.core import _deployment_id_from_job_id
+from cortex_training.client.core import _model_deployment_status
+from cortex_training.client.core import _model_deployment_sub_job
 from cortex_training.tui.format import _ACTIVE_STATUSES as ACTIVE_STATUSES
 from cortex_training.tui.format import _num as compact_number
 from cortex_training.tui.format import cut_cells
@@ -313,6 +316,59 @@ def sub_jobs(job: dict) -> list:
             for i, (sj, kind) in enumerate(zip(subs, kinds))]
 
 
+def is_deployment(job: Any) -> bool:
+    """Whether a job is a model deployment, by the CLI's own rule (the client's
+    ``_model_deployment_sub_job``), so the TUI and ``ct`` never disagree."""
+    return _model_deployment_sub_job(job) is not None
+
+
+def deployment_class(job: Any) -> str:
+    """``EVALUATION``, ...; ``""`` for a job that isn't a deployment."""
+    sj = _model_deployment_sub_job(job)
+    return str(sj["inference_config"].get("deployment_class") or "") if sj else ""
+
+
+def deployment_sub_job_id(job: Any) -> Optional[str]:
+    """The sub-job that serves the deployment."""
+    sj = _model_deployment_sub_job(job)
+    return str(sj["sub_job_id"]) if sj and sj.get("sub_job_id") else None
+
+
+def status_word_for(job: Any, status: Any) -> str:
+    """``status`` (the job's, or one of its sub-jobs') as the screens word it: a
+    deployment's in the CLI's deployment words (``RUNNING`` -> ``ready``)."""
+    if is_deployment(job):
+        return _model_deployment_status({"status": status}).lower()
+    return status_word(status)
+
+
+def base_url(client: Any) -> str:
+    """The OpenAI-compatible base URL of deployments in ``client``'s schema; ``""`` if it has none."""
+    url = getattr(client, "model_deployment_base_url", None)
+    return url if isinstance(url, str) else ""
+
+
+def _call_as(job: dict) -> str:
+    try:
+        return _deployment_id_from_job_id(job.get("job_id"))
+    except ValueError:  # the client won't name this job; neither does the TUI
+        return ""
+
+
+def deployment_facts(job: dict) -> list:
+    """The preview's deployment rows: class, replicas, idle timeout and the model name to call."""
+    cfg = _model_deployment_sub_job(job)["inference_config"]
+    replicas = _as_float(cfg.get("num_replicas"))
+    idle = _as_float(job.get("idle_timeout_seconds"))
+    call_as = _call_as(job)
+    return [
+        ("Class", deployment_class(job)),
+        ("Replicas", str(int(replicas)) if replicas is not None else "—"),
+        ("Idle timeout", "off" if idle == 0 else fmt_duration(idle)),  # 0 disables reclamation
+        *([("Call as", call_as)] if call_as else []),
+    ]
+
+
 def sub_job_type(sj: dict) -> str:
     """The normalized type shown in lists and log tags."""
     return sub_job_kind(sj) or str(sj.get("job_type") or sj.get("type") or "").strip().lower().removeprefix("job_type_")
@@ -343,6 +399,8 @@ _SHORT_KINDS = {"training": "train", "sampling": "sample", "log_prob": "logprob"
 
 def job_type_label(job: dict) -> str:
     """One kind, or a compact ``train+sample``-style combination."""
+    if is_deployment(job):
+        return "deployment"
     kinds = list(dict.fromkeys(job_types(job)))
     if len(kinds) > 1 and all(kind in _SHORT_KINDS for kind in kinds):
         return "+".join(_SHORT_KINDS[kind] for kind in _SHORT_KINDS if kind in kinds)
@@ -495,17 +553,18 @@ def subjob_config_json(sj: dict) -> list:
     return json.dumps(submitted, indent=2, sort_keys=True, default=str).splitlines()
 
 
-def preview_facts(job: dict, now: datetime) -> list:
+def preview_facts(job: dict, now: datetime, *, base_url: str = "") -> list:
     """(label, value) facts for the job preview's grid, in display order.
 
     The id, status and elapsed time head the preview, and its lifecycle has a
     row of its own, so they are not here. A time the job record lacks is ``—``,
-    with no "ago" after it.
+    with no "ago" after it. A deployment adds its own rows (class, replicas,
+    idle timeout, the model name to call) right after Type.
     """
     location = location_label(job)
     # The age only beside a time that is shown: a dash has none.
     updated, ago = format_created_at(job.get("updated_at")) or "—", fmt_ago(job.get("updated_at"), now)
-    return [
+    facts = [
         ("Model", ", ".join(job_models(job)) or "—"),
         ("Type", job_type_label(job)),
         ("GPUs", gpu_request_text(job)),
@@ -514,6 +573,9 @@ def preview_facts(job: dict, now: datetime) -> list:
         ("Last update", f"{updated}  ({ago})" if "—" not in (updated, ago) else updated),
         *([("Schema", location)] if location else []),
     ]
+    if is_deployment(job):
+        facts[2:2] = [*deployment_facts(job), *([("Base URL", base_url)] if base_url else [])]
+    return facts
 
 
 def elapsed_text(job: dict, now: datetime) -> str:
@@ -709,7 +771,8 @@ SEARCH_FIELDS = {
     "id": "job id",
     "status": "job status",
     "owner": "submitting user or owning role",
-    "type": "training / sampling",
+    "type": "training / sampling / deployment",
+    "class": "deployment class (EVALUATION)",
     "model": "model name",
     "method": "full / lora",
     "gpu": "GPU type (H200, B200, B300)",
@@ -745,6 +808,7 @@ _FIELD_ALIASES = {
     "alpha": "lora_alpha",
     "user": "owner",
     "job_type": "type",
+    "deployment_class": "class",
     "model_name": "model",
     "database": "db",
     "database_name": "db",
@@ -912,7 +976,10 @@ def field_values(job: dict, key: str, *, home: Optional[tuple] = None) -> list:
         return [str(v) for v in (job.get("submitted_by"), job.get("owner_role")) if v]
     if key == "type":
         # The short kind the list shows (log_prob) and the type as the API spells it (log_probability).
-        return list(dict.fromkeys([*job_types(job), *_raw_job_types(job)]))
+        kinds = [*(["deployment"] if is_deployment(job) else []), *job_types(job), *_raw_job_types(job)]
+        return list(dict.fromkeys(kinds))
+    if key == "class":
+        return [deployment_class(job)] if is_deployment(job) else []
     if key == "model":
         # The whole name, and the part after the organization that the Model column shows.
         return list(dict.fromkeys(name for model in job_models(job) for name in (model, short_model(model))))
