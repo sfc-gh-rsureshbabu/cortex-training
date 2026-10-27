@@ -1381,11 +1381,13 @@ its record says it is a deployment.
   dropping or ended), how long the deployment took to start, and the
   download's warnings (skipped chunks, say). The table has one row per drain,
   newest first, for the newest 240 (about two hours; a note under it says when
-  it leaves older ones out): requests per second, requests,
-  latency and time-to-first-token p50/p99, queue p99, running and waiting
-  requests, the highest KV cache use, and replicas (with their errors, when any).
-  It refreshes with the job while the tab is shown, and for ten minutes after
-  the job ends, while its last drains are uploaded; `r` refreshes it now.
+  it leaves older ones out): its time (`HH:MM:SS` in local time, with the date
+  first unless every row is today's), requests per second, requests, latency
+  and time-to-first-token p50/p99, queue p99, running and waiting requests, the
+  highest KV cache use, and replicas (with their errors, when any). It
+  refreshes with the job while the tab is shown, while the deployment is
+  dropping, and for ten minutes after it ends, while its last drains are
+  uploaded; `r` refreshes it now.
 - **Training metrics** charts what the training sub-job's `/step` and
   `/fwd-bwd` calls returned, read from its own `training.jsonl`
   ([Training metrics download](rest-api.md#125-training-metrics-download)),

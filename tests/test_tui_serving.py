@@ -172,6 +172,22 @@ def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     assert next(iter(table.columns[0].cells)) == "—"
 
 
+def test_serving_rows_carry_their_date_unless_all_are_today_s():
+    from datetime import datetime
+
+    from cortex_training.tui.serving_view import ServingPane
+
+    now = datetime.now().replace(microsecond=0)
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: [])
+    pane._data = serving.ServingData([serving.parse_line(_drain(now.timestamp(), 2))])
+    assert list(pane._table().columns[0].cells) == [now.strftime("%H:%M:%S")]
+    two_days_ago = now.timestamp() - 2 * 86400
+    pane._data = serving.ServingData([serving.parse_line(_drain(two_days_ago, 1)),
+                                      serving.parse_line(_drain(now.timestamp(), 2))])
+    assert list(pane._table().columns[0].cells) == [
+        now.strftime("%m-%d %H:%M:%S"), datetime.fromtimestamp(two_days_ago).strftime("%m-%d %H:%M:%S")]
+
+
 def test_an_ended_deployment_s_last_drain_reads_as_a_time_not_an_age(monkeypatch):
     from datetime import datetime
 
@@ -315,8 +331,8 @@ def test_open_by_id_switches_to_deployment_tabs():
             table = _text(screen, "#serving-table")
             rows = [line for line in table.splitlines() if ":" in line]  # the drain rows start with a time
             # Time, req/s, Requests, ...: newest first, 15 requests over 30 s; the first drain has no rate.
-            assert rows[0].split()[1:3] == ["0.50", "15"]
-            assert rows[1].split()[1:3] == ["—", "0"]
+            assert rows[0].split()[2:4] == ["0.50", "15"]  # 1970 rows: the date comes first
+            assert rows[1].split()[2:4] == ["—", "0"]
             await _settle(app, pilot)
 
     asyncio.run(run())
@@ -414,7 +430,7 @@ def test_an_ended_deployment_reads_ended_with_its_rows():
             await pilot.press("v")
             assert await _wait(pilot, lambda: "ended" in _text(screen, "#serving-status"))
             rows = [line for line in _text(screen, "#serving-table").splitlines() if ":" in line]
-            assert len(rows) == 1 and rows[0].split()[2] == "3"  # Time, req/s, Requests
+            assert len(rows) == 1 and rows[0].split()[3] == "3"  # date, time, req/s, Requests
             await _settle(app, pilot)
 
     asyncio.run(run())

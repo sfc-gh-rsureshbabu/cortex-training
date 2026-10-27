@@ -140,6 +140,11 @@ def test_a_deployment_s_count_and_sub_job_say_its_status_as_its_row_does():
     assert kind == "starting" and "is INITIALIZING" in note and "PLACING" not in note, note
     placing = {**_training(), "status": "PLACING"}
     assert "is PLACING" in LogScreen(MagicMock(), "7", job=placing)._waiting_for("7:training:0")[1]
+    for job, sub_job_id, then in ((_deployment(), DEPLOY, "ready"), (_training(), "7:training:0", "running")):
+        screen = LogScreen(MagicMock(), job["job_id"], job=job)
+        screen._current_source, screen._set_waiting = sub_job_id, MagicMock()
+        screen._wait_after_error(screen._tail_gen, sub_job_id, "cancelling")
+        assert screen._set_waiting.call_args.args[1].endswith(f"once it is {then}")
 
 
 def test_preview_facts_of_a_deployment():

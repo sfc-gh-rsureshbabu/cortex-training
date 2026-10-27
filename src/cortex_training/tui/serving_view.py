@@ -186,6 +186,10 @@ class ServingPane(_Pane):
         for name in ("Time", "req/s", "Requests", "Latency p50", "p99", "TTFT p50", "p99", "Queue p99",
                      "Run/Wait", "KV max", "Replicas"):
             table.add_column(name, justify="left" if name == "Time" else "right")
+        today = datetime.now().date()
+        # The date too, unless every row shown is today's: an ended deployment's rows may be days old.
+        fmt = "%H:%M:%S" if all(at is None or at.date() == today
+                                for at in (_when(d.drained_at) for d in drains[start:])) else "%m-%d %H:%M:%S"
         for i in range(len(drains) - 1, start - 1, -1):
             d, prev = drains[i], drains[i - 1] if i else None
             r = serving.rate(prev, d)
@@ -195,7 +199,7 @@ class ServingPane(_Pane):
                 replicas.append(f" ({errors} err)", style=theme.ERR)
             at = _when(d.drained_at)
             table.add_row(
-                "—" if at is None else at.strftime("%H:%M:%S"),
+                "—" if at is None else at.strftime(fmt),
                 "—" if r is None else f"{r:.2f}",
                 str(d.completed),
                 _seconds(d.latency_p50), _seconds(d.latency_p99),

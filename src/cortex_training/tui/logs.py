@@ -2707,10 +2707,11 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
                         "job's status changes (r tries now)")
             else:
                 note = (f"waiting: {name} hasn't started yet (the service isn't routing to it); "
-                        "the tail starts again once it is up")
+                        f"the tail starts again once it is {views.status_word_for(self._job, 'running')}")
             self._set_waiting("stopped", note)
         else:
-            self._set_waiting("stopped", f"waiting: {name} is {self._said(why)}; the tail starts again once it is up")
+            self._set_waiting("stopped", f"waiting: {name} is {self._said(why)}; "
+                              f"the tail starts again once it is {views.status_word_for(self._job, 'running')}")
 
     def _run_download(self, sub_job_id: str) -> None:
         """Worker thread. The saved-console download this view claimed (see _claim_stdout):
