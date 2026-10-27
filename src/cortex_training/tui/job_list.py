@@ -546,7 +546,7 @@ class JobListScreen(FollowsPointer, Screen):
                 shown = f"showing the partial {which} list"
             else:
                 shown = f"list from {self._last_refreshed}" if self._last_refreshed else ""
-            bits = [switching, shown]
+            bits = ["deployments" if self._deployments else "", switching, shown]
             self.app.sub_title = "  ·  ".join(bit for bit in bits if bit)
             return
         if self._scope is not None and self._scope.loading:

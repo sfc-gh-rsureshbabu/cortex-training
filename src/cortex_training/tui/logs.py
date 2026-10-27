@@ -1877,7 +1877,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
                 pane = self.query_one("#serving-tab", ServingPane)
             except NoMatches:  # not mounted yet
                 return
-            if pane._shown:
+            if pane.shown:
                 pane.reload()
 
     @staticmethod

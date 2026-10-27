@@ -389,7 +389,7 @@ def test_a_training_job_that_ends_never_reads_a_console_for_serving():
             screen._fetch_status()
             assert await _wait(pilot, lambda: screen._job_status == "CANCELLED")
             await pilot.pause(0.1)
-            assert not pane._shown and not pane.reload.called
+            assert not pane.shown and not pane.reload.called
             # The Logs tab saves the ended job's console; nothing downloads into Serving's directory.
             assert not [call for call in c.download_stdout_logs.call_args_list
                         if str(screen._serving_root) in map(str, call.args)], c.download_stdout_logs.call_args_list

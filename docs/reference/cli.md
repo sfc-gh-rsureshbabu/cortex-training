@@ -956,8 +956,8 @@ call and shows no pages.
 
 The list has two views of the same jobs: **Jobs** (training and sampling, where
 `ct tui` opens) and **Deployments** (the jobs `ct` lists as model deployments; see
-[Model Deployments](#model-deployments)). `d` switches between them; the title says which
-is on screen, and the info line says how many jobs the other one holds (`106
+[Model Deployments](#model-deployments)). `d` switches between them; the title starts with
+`deployments` while that view is on screen, and the info line says how many jobs the other one holds (`106
 deployments · d shows them`). Search covers the view on screen; when it matches nothing
 there but something in the other view, it says so (`d shows the 3 matching deployments.`).
 A deployment's status

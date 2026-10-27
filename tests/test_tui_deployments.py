@@ -169,6 +169,10 @@ def test_d_switches_between_jobs_and_deployments():
             assert await _wait(pilot, lambda: _ids(screen) == {"8", "10"})
             assert "2 jobs · d shows them" in _info(screen)
             assert "deployments" in app.sub_title
+            screen._switching_text = lambda: "reading every schema…"  # a pressed, the other list still read
+            screen._update_subtitle()
+            assert app.sub_title.startswith("deployments  ·  reading every schema…"), app.sub_title
+            del screen._switching_text
             await pilot.press("d")
             assert await _wait(pilot, lambda: _ids(screen) == {"7", "9"})
             await _settle(app, pilot)

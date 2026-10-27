@@ -55,6 +55,11 @@ class _Pane(Vertical):
         self._loading = False
         self._error: str | None = None
 
+    @property
+    def shown(self) -> bool:
+        """Whether the tab was shown at least once (and so has loaded)."""
+        return self._shown
+
     def _post(self, fn, *args) -> None:
         """Worker thread: run ``fn(*args)`` on the UI thread, dropped once the pane is gone."""
 
