@@ -6270,9 +6270,10 @@ class CortexTrainingClient:
             sub_job_id: Optional. Which sampling sub-job runs the request, e.g.
                 ``"{job_id}:sampling:1"``; discover the ids from
                 :meth:`get_job`'s ``sub_jobs``. Sent as a query parameter, since
-                the body is an opaque frame. Omit only when the job has exactly
-                one sampling sub-job — with more, the server rejects the request
-                and lists the valid ids.
+                the body is an opaque frame. If omitted, no ``sub_job_id`` is
+                sent and the server chooses the sub-job; currently that is the
+                job's only sampling sub-job, and a job with several rejects the
+                request and lists the valid ids.
         """
         body = self._build_generate_frame(
             "generate", job_id, prompts, sampling_params, routing_key, strict, sub_job_id
