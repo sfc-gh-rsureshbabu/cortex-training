@@ -48,6 +48,7 @@ from cortex_training.tui.format import _ACTIVE_STATUSES as ACTIVE_STATUSES
 from cortex_training.tui.format import _num as compact_number
 from cortex_training.tui.format import cut_cells
 from cortex_training.tui.format import _subjob_config as subjob_config
+from cortex_training.tui.format import finite_number as _as_float
 from cortex_training.tui.format import format_created_at
 from cortex_training.tui.format import local_time
 from cortex_training.tui.format import parse_ts  # noqa: F401 - views.parse_ts for the screens
@@ -1015,16 +1016,6 @@ def field_values(job: dict, key: str, *, home: Optional[tuple] = None) -> list:
         peft_key = "r" if key == "lora_r" else "lora_alpha"
         return [c["peft_config"][peft_key] for c in cfgs if isinstance(c.get("peft_config"), dict) and c["peft_config"].get(peft_key) is not None]
     return []
-
-
-def _as_float(v: Any) -> Optional[float]:
-    if isinstance(v, bool):
-        return None
-    try:
-        f = float(v)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def _compare(actual: Any, op: str, wanted: str) -> bool:

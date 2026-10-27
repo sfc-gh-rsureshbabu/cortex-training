@@ -32,27 +32,29 @@ from typing import Any
 from rich.cells import cell_len
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+def finite_number(value: Any) -> float | None:
+    """``value`` as a finite float (a number or a numeric string); None for a bool, NaN,
+    Infinity (which json.loads reads), an int too big for a float, or anything else."""
+    if isinstance(value, bool):
         return None
     try:
         f = float(value)
-    except OverflowError:  # an int too big for a float
+    except (TypeError, ValueError, OverflowError):
         return None
-    return f if math.isfinite(f) else None  # json.loads reads NaN and Infinity
+    return f if math.isfinite(f) else None
 
 
 def _drain_summary(entry: dict) -> str:
     """A serving drain's numbers, which its line alone hides: ``16 req · p50 50ms · 2 replicas``."""
-    done = _number(entry.get("completed_requests"))
+    done = finite_number(entry.get("completed_requests"))
     if done is None:
         return ""
     parts = [f"{int(done)} req"]
     for key, label in (("latency_s_p50", "p50"), ("ttft_s_p99", "ttft p99")):
-        value = _number(entry.get(key))
+        value = finite_number(entry.get(key))
         if value is not None:
             parts.append(f"{label} {short_seconds(value)}")
-    replicas, errors = _number(entry.get("replica_count")), _number(entry.get("replica_errors"))
+    replicas, errors = finite_number(entry.get("replica_count")), finite_number(entry.get("replica_errors"))
     if replicas is not None:
         parts.append(f"{int(replicas)} replica{'' if replicas == 1 else 's'}")
     if errors:

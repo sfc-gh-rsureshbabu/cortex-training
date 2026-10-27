@@ -530,3 +530,23 @@ def test_two_reads_at_once_take_turns(tmp_path, monkeypatch):
         t.join()
     assert not any(overlapped)
     assert [d.drained_at for d in reader.read().drains] == [float(t) for t in range(50)]
+
+
+def test_logs_and_serving_read_a_drain_s_numbers_alike():
+    from cortex_training.tui.format import format_log_entry
+
+    line = _drain(100.0, "16", latency_s_p50="0.05", ttft_s_p99="0.215", replica_count="2", replica_errors="1")
+    d = serving.parse_line(line)
+    assert (d.completed, d.latency_p50, d.ttft_p99, d.replicas, d.replica_errors) == (16, 0.05, 0.215, 2, 1)
+    assert format_log_entry(json.loads(line)).endswith(
+        "drain_metrics  16 req · p50 50ms · ttft p99 215ms · 2 replicas · 1 replica error")
+
+
+def test_one_number_helper_refuses_what_is_not_a_finite_number():
+    from cortex_training.tui import format as fmt
+    from cortex_training.tui import views
+
+    assert serving._num is fmt.finite_number and views._as_float is fmt.finite_number
+    assert fmt.finite_number(2) == 2.0 and fmt.finite_number("0.5") == 0.5
+    for bad in (None, True, False, float("nan"), float("inf"), "NaN", "-Infinity", "1e400", 10 ** 400, "", "x", [1]):
+        assert fmt.finite_number(bad) is None, bad

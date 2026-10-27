@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import json
-import math
 import os
 from pathlib import Path
 import threading
@@ -17,6 +16,7 @@ from typing import Any
 from typing import Optional
 
 from cortex_training.tui import views
+from cortex_training.tui.format import finite_number as _num
 from cortex_training.tui.saved_log import committed_size
 
 # Cheap substring checks before json.loads: most console lines are neither.
@@ -50,16 +50,6 @@ class ServingData:
     @property
     def latest(self) -> Optional[Drain]:
         return self.drains[-1] if self.drains else None
-
-
-def _num(value: Any) -> Optional[float]:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def _int(value: Any) -> Optional[int]:
