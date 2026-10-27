@@ -286,3 +286,43 @@ def test_an_ended_deployment_reads_ended_with_its_rows():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_a_deployment_that_ends_on_the_serving_tab_reads_ended_with_its_last_drains():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("serving"))
+            c.download_stdout_logs.side_effect = _console([_drain(0.0, 3), _drain(30.0, 6)])  # uploaded at the end
+            c.get_job.return_value = _deployment("CANCELLED")
+            screen._fetch_status()  # the 60 s status check
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("ended"))
+            assert await _wait(pilot, lambda: len([ln for ln in _text(screen, "#serving-table").splitlines()
+                                                   if ":" in ln]) == 2)
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_training_job_that_ends_never_reads_a_console_for_serving():
+    job = {"job_id": "7", "status": "RUNNING", "sub_jobs": [{"sub_job_id": "7:training:0", "job_type": "training"}]}
+    c = _client(job)
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "7", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            c.get_job.return_value = {**job, "status": "CANCELLED"}
+            screen._fetch_status()
+            assert await _wait(pilot, lambda: screen._job_status == "CANCELLED")
+            await pilot.pause(0.1)
+            assert not screen.query_one("#serving-tab")._shown
+            assert screen.query_one("#serving-tab")._reader is None
+            await _settle(app, pilot)
+
+    asyncio.run(run())

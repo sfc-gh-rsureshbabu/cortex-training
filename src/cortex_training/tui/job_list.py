@@ -1513,9 +1513,14 @@ class JobListScreen(FollowsPointer, Screen):
                 # A schema's whole list held to its newest jobs: f searches every one of them.
                 everything = (len(self._cut_listing.everything)
                               if self._cut_listing is not None and not self._full_list else 0)
+                # The new search fields (type:deployment, class:) can only ever match in the other view.
+                there = sum(1 for job in everyone if views.is_deployment(job) != self._deployments
+                            and views.job_matches_query(job, query, home=home, hay=self._haystack(job)))
+                noun = "job" if self._deployments else "deployment"
+                elsewhere = f"d shows the {there:,} matching {noun}{'' if there == 1 else 's'}." if there else ""
                 found = dict(cut=loaded_text(self._scope), older=self._older_matches(query) if hidden else (),
                              location=self._schema_label() if one else "", widen=widen, narrow=narrow,
-                             everything=everything)
+                             everything=everything, elsewhere=elsewhere)
                 message = views.no_match_message(self._filter, query, len(recent), **found)
             elif others:
                 what = "deployments" if self._deployments else "training or sampling jobs"

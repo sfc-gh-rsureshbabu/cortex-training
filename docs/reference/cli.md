@@ -958,7 +958,9 @@ The list has two views of the same jobs: **Jobs** (training and sampling, where
 `ct tui` opens) and **Deployments** (the jobs `ct` lists as model deployments; see
 [Model Deployments](#model-deployments)). `d` switches between them; the title says which
 is on screen, and the info line says how many jobs the other one holds (`106
-deployments · d shows them`). Search covers the view on screen. A deployment's status
+deployments · d shows them`). Search covers the view on screen; when it matches nothing
+there but something in the other view, it says so (`d shows the 3 matching deployments.`).
+A deployment's status
 reads as `ct` shows it (`READY`, `DROPPED`, ...); the status filter and `status:` search
 still use the job statuses (`running`, `cancelled`, ...).
 
@@ -1373,7 +1375,8 @@ shows the training tabs until its record says it is a deployment.
   table has one row per drain, newest first: requests per second, requests,
   latency and time-to-first-token p50/p99, queue p99, running and waiting
   requests, the highest KV cache use, and replicas (with their errors, when any).
-  It refreshes with the job while the tab is shown; `r` refreshes it now.
+  It refreshes with the job while the tab is shown, and once more when the job
+  ends, for its last drains; `r` refreshes it now.
 - **Training metrics** charts what the training sub-job's `/step` and
   `/fwd-bwd` calls returned, read from its own `training.jsonl`
   ([Training metrics download](rest-api.md#125-training-metrics-download)),

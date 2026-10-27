@@ -1218,8 +1218,10 @@ def narrowable_name(name: str) -> bool:
 
 
 def no_match_message(text: str, query: Query, searched: int, *, cut: str = "", older: Iterable[str] = (),
-                     location: str = "", widen: bool = False, narrow: bool = False, everything: int = 0) -> str:
-    """Explain an empty search, including truncated, old, or wider matches."""
+                     location: str = "", widen: bool = False, narrow: bool = False, everything: int = 0,
+                     elsewhere: str = "") -> str:
+    """Explain an empty search, including truncated, old, or wider matches; ``elsewhere`` says
+    where the other view's matches are."""
     older = list(older)
     if cut:
         lines = [f"No jobs match “{text}” among the {searched:,} job(s) loaded: {cut}.",
@@ -1233,6 +1235,8 @@ def no_match_message(text: str, query: Query, searched: int, *, cut: str = "", o
         many = len(older) > 1
         lines.append(f"  {len(older):,} older job{'s' if many else ''} match{'' if many else 'es'} (the list hides "
                      f"jobs older than 6 months): cortex-training tui {older[0]} opens {'the newest' if many else 'it'}.")
+    if elsewhere:
+        lines.append(f"  {elsewhere}")
     if widen:
         lines.append("  a searches every database and schema.")
     if narrow:

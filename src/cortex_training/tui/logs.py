@@ -1867,6 +1867,15 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         self._paint_sources()
         if self._resource_active():
             self._render_resource()
+        if not views.is_live(self._tab_job()):
+            # Serving redraws only when it reloads, and the live refresh has stopped:
+            # one last read shows it ended, with the drains uploaded at the end.
+            try:
+                pane = self.query_one("#serving-tab", ServingPane)
+            except NoMatches:  # not mounted yet
+                return
+            if pane._shown:
+                pane.reload()
 
     @staticmethod
     def _sub_statuses(job: dict) -> dict[str, str]:

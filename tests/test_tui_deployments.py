@@ -207,3 +207,29 @@ def test_a_deployment_s_row_shows_its_deployment_status():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_a_search_that_matches_only_the_other_view_points_to_it():
+    c = _client([_training(), _sampling(), _deployment(job_id="8"), _deployment(job_id="10"),
+                 _deployment(job_id="11")])
+
+    async def search(pilot, screen, text):
+        await pilot.press("escape")  # clear the last one
+        await pilot.press("/", *text, "enter")
+        assert await _wait(pilot, lambda: screen._filter == text and screen._nomatch)
+        return screen._nomatch
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._job_by_item)
+            screen = app.screen
+            assert "d shows the 3 matching deployments." in await search(pilot, screen, "type:deployment")
+            assert "d shows the 1 matching deployment." in await search(pilot, screen, "10")
+            await pilot.press("escape")
+            await pilot.press("d")
+            assert await _wait(pilot, lambda: _ids(screen) == {"8", "10", "11"})
+            assert "d shows the 1 matching job." in await search(pilot, screen, "7")
+            await _settle(app, pilot)
+
+    asyncio.run(run())
