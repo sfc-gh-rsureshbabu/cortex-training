@@ -130,7 +130,7 @@ class ServingPane(_Pane):
 
     def _status_text(self) -> Text:
         data, latest = self._data, self._data.latest
-        text = Text(serving.serving_state(self._job(), data), style="bold")
+        text = Text(serving.serving_state(self._job(), data, reading=self._loading), style="bold")
         if latest is not None:
             if latest.replicas is not None:
                 text.append(f"  ·  {latest.replicas} replica{'' if latest.replicas == 1 else 's'}", style=theme.MUTED)
@@ -149,6 +149,8 @@ class ServingPane(_Pane):
 
     def _table(self):
         drains = self._data.drains
+        if not drains and self._loading:
+            return Text("Reading the console…", style=theme.MUTED)
         if not drains:
             return Text("No drain_metrics yet: a deployment writes one every 30 s once it serves.", style=theme.MUTED)
         table = Table(box=None, pad_edge=False, header_style="bold")

@@ -125,18 +125,20 @@ class ConsoleReader:
                 self._offset, self._data = 0, ServingData()
             self._file = (st.st_dev, st.st_ino)
             f.seek(self._offset)
-            chunk = f.read(size - self._offset)
-        end = chunk.rfind(b"\n") + 1  # a line cut short waits for the rest of it
-        added = False
-        for raw in chunk[:end].splitlines():
-            line = raw.decode("utf-8", "replace")
-            drain = parse_line(line)
-            if drain is not None:
-                self._data.drains.append(drain)
-                added = True
-            elif self._data.startup_s is None:
-                self._data.startup_s = _startup(line)
-        self._offset += end
+            added = False
+            while self._offset < size:
+                raw = f.readline(size - self._offset)
+                if not raw.endswith(b"\n"):
+                    break  # a line cut short waits for the rest of it
+                self._offset += len(raw)
+                for part in raw.splitlines():
+                    line = part.decode("utf-8", "replace")
+                    drain = parse_line(line)
+                    if drain is not None:
+                        self._data.drains.append(drain)
+                        added = True
+                    elif self._data.startup_s is None:
+                        self._data.startup_s = _startup(line)
         if added:
             self._data.drains.sort(key=lambda d: d.drained_at)  # chunks can land out of order
         return self._copy()
@@ -153,10 +155,16 @@ def rate(prev: Optional[Drain], cur: Drain) -> Optional[float]:
     return cur.completed / gap if gap > 0 else None
 
 
-def serving_state(job: dict, data: ServingData) -> str:
-    """Where a deployment stands, from its status and whether it has drained yet."""
+def serving_state(job: dict, data: ServingData, *, reading: bool = False) -> str:
+    """Where a deployment stands, from its status and whether it has drained yet. ``reading``: its
+    console is still being read, so no drain yet says nothing."""
     if not views.is_live(job):
         return "ended"
-    if views.status_word(job.get("status")) != "running":
+    word = views.status_word(job.get("status"))
+    if word == "unknown":
+        return "serving" if data.drains else "status unknown"
+    if word != "running":
         return "starting"
-    return "serving" if data.drains else "starting (no metrics yet)"
+    if data.drains:
+        return "serving"
+    return "running" if reading else "starting (no metrics yet)"

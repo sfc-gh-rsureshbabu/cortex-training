@@ -112,6 +112,23 @@ def test_bytes_past_the_committed_size_wait_for_the_next_read(tmp_path, monkeypa
     assert [d.completed for d in reader.read().drains] == [1, 2]
 
 
+def test_a_long_new_tail_is_read_a_line_at_a_time(tmp_path):
+    import tracemalloc
+
+    path = tmp_path / "stdout.log"
+    filler = "INFO a console line that is not a drain " + "x" * 60 + "\n"
+    path.write_text(filler * 80_000 + _drain(0.0, 5) + "\n")  # about 8 MB, new since the last read
+    reader = serving.ConsoleReader(path)
+    tracemalloc.start()
+    try:
+        drains = reader.read().drains
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert [d.completed for d in drains] == [5]
+    assert peak < 1_000_000, peak  # not the whole tail held at once
+
+
 def test_a_drain_time_past_what_a_date_holds_shows_a_dash():
     from cortex_training.tui.serving_view import ServingPane
 
@@ -128,6 +145,21 @@ def test_serving_state():
     assert serving.serving_state({"status": "RUNNING"}, none) == "starting (no metrics yet)"
     assert serving.serving_state({"status": "RUNNING"}, some) == "serving"
     assert serving.serving_state({"status": "CANCELLED"}, some) == "ended"
+    # UNKNOWN is live but not known to run: its drains say it serves, and nothing else says it starts.
+    assert serving.serving_state({"status": "UNKNOWN"}, some) == "serving"
+    assert serving.serving_state({"status": "UNKNOWN"}, none) == "status unknown"
+
+
+def test_a_first_load_says_it_reads_the_console_rather_than_no_metrics():
+    from cortex_training.tui.serving_view import ServingPane
+
+    pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: _deployment(), download=lambda **_: [])
+    pane._loading = True
+    status, table = str(pane._status_text()), str(pane._table())
+    assert "no metrics" not in status and "No drain_metrics" not in table, (status, table)
+    assert "Reading the console" in table
+    pane._loading = False
+    assert "no metrics yet" in str(pane._status_text()) and "No drain_metrics yet" in str(pane._table())
 
 
 DEPLOY = "8:sampling:0"
@@ -351,12 +383,16 @@ def test_a_training_job_that_ends_never_reads_a_console_for_serving():
         app = CortexTrainingLogTUI(c, "7", poll_interval=0.01)
         async with app.run_test(size=(140, 40)) as pilot:
             screen = await _open(app, pilot)
+            pane = screen.query_one("#serving-tab")
+            pane.reload = MagicMock(wraps=pane.reload)
             c.get_job.return_value = {**job, "status": "CANCELLED"}
             screen._fetch_status()
             assert await _wait(pilot, lambda: screen._job_status == "CANCELLED")
             await pilot.pause(0.1)
-            assert not screen.query_one("#serving-tab")._shown
-            assert screen.query_one("#serving-tab")._reader is None
+            assert not pane._shown and not pane.reload.called
+            # The Logs tab saves the ended job's console; nothing downloads into Serving's directory.
+            assert not [call for call in c.download_stdout_logs.call_args_list
+                        if str(screen._serving_root) in map(str, call.args)], c.download_stdout_logs.call_args_list
             await _settle(app, pilot)
 
     asyncio.run(run())
