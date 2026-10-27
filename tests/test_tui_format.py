@@ -628,3 +628,20 @@ def test_the_clipboard_file_takes_precedence_so_a_test_never_touches_the_real_on
     # An unwritable path is a failure, not a crash.
     monkeypatch.setenv("CORTEX_TRAINING_TUI_CLIPBOARD_FILE", str(tmp_path / "no-such-dir" / "clip.txt"))
     assert clipboard.copy_local("x") is False
+
+
+def test_a_drain_line_says_its_numbers():
+    entry = {"ts": "2026-06-12T00:00:01Z", "level": "INFO", "logger": "zones.server_head", "msg": "drain_metrics",
+             "completed_requests": 16, "latency_s_p50": 0.05, "ttft_s_p99": 0.215, "replica_count": 2,
+             "replica_errors": 1}
+    assert format_log_entry(entry).endswith(
+        "drain_metrics  16 req · p50 50ms · ttft p99 215ms · 2 replicas · 1 replica error")
+
+
+def test_a_quiet_drain_and_other_lines_stay_as_they_are():
+    quiet = {"msg": "drain_metrics", "completed_requests": 0, "latency_s_p50": None, "replica_count": 1,
+             "replica_errors": 0}
+    assert format_log_entry(quiet).endswith("drain_metrics  0 req · 1 replica")
+    assert format_log_entry({"msg": "drain_metrics"}).endswith("drain_metrics")  # an older shape: no numbers
+    assert format_log_entry({"msg": "hello", "completed_requests": 3}).endswith("hello")
+    assert format_log_entry({"msg": "drain_metrics", "completed_requests": True}).endswith("drain_metrics")

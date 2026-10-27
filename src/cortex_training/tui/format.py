@@ -31,6 +31,28 @@ from typing import Any
 from rich.cells import cell_len
 
 
+def _number(value: Any) -> float | None:
+    return None if isinstance(value, bool) or not isinstance(value, (int, float)) else value
+
+
+def _drain_summary(entry: dict) -> str:
+    """A serving drain's numbers, which its line alone hides: ``16 req · p50 50ms · 2 replicas``."""
+    done = _number(entry.get("completed_requests"))
+    if done is None:
+        return ""
+    parts = [f"{int(done)} req"]
+    for key, label in (("latency_s_p50", "p50"), ("ttft_s_p99", "ttft p99")):
+        value = _number(entry.get(key))
+        if value is not None:
+            parts.append(f"{label} {short_seconds(value)}")
+    replicas, errors = _number(entry.get("replica_count")), _number(entry.get("replica_errors"))
+    if replicas is not None:
+        parts.append(f"{int(replicas)} replica{'' if replicas == 1 else 's'}")
+    if errors:
+        parts.append(f"{int(errors)} replica error{'' if errors == 1 else 's'}")
+    return " · ".join(parts)
+
+
 def format_log_entry(entry: Any) -> str:
     """Render one log entry (a parsed JSONL object or ``{"_raw": ...}``)."""
     if not isinstance(entry, dict):
@@ -47,6 +69,10 @@ def format_log_entry(entry: Any) -> str:
     if msg is None:
         # Unknown shape: show the raw JSON so nothing is silently dropped.
         msg = json.dumps(entry, sort_keys=True)
+    if msg == "drain_metrics":
+        summary = _drain_summary(entry)
+        if summary:
+            msg = f"{msg}  {summary}"
     parts = []
     if ts:
         parts.append(ts)

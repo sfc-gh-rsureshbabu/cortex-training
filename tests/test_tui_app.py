@@ -273,6 +273,7 @@ async def _run_resource_tab(tmp_path):
         status = str(app.screen.query_one("#resource-status", Static).render())
         assert "2 reporting" in status
         assert "training #0" in status  # named by type and index
+        assert "reserved" not in status  # the memory note is a deployment's
         calls = c.download_metrics.call_count
 
         # w cycles the GPU window; the digits do nothing on the job detail screen.
@@ -360,6 +361,32 @@ async def _run_resource_tab(tmp_path):
 def test_resource_tab_is_lazy_and_renders_multiple_gpus(tmp_path, monkeypatch):
     monkeypatch.setenv("CORTEX_TRAINING_TUI_CACHE_DIR", str(tmp_path))
     asyncio.run(_run_resource_tab(tmp_path))
+
+
+def test_a_deployment_s_resources_say_its_memory_is_reserved(tmp_path):
+    c = _client()
+    c.get_job.return_value = {"job_id": "7", "status": "RUNNING", "sub_jobs": [
+        {"sub_job_id": "7:sampling:0", "job_type": "sampling", "status": "RUNNING",
+         "inference_config": {"deployment_class": "EVALUATION", "num_replicas": 1.0}}]}
+
+    def download(job_id, output_dir, **_kwargs):
+        _write_gpu_metrics(output_dir, "7:sampling:0", gpu_count=1)
+        return []
+
+    c.download_metrics.side_effect = download
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "7", poll_interval=0.01)
+        async with app.run_test(size=(130, 36)) as pilot:
+            assert await _wait(pilot, app, lambda: isinstance(app.screen, LogScreen)
+                               and app.screen._current_source == "7:sampling:0")
+            await pilot.press("g")
+            assert await _wait(pilot, app, lambda: "reserved up front" in
+                               str(app.screen.query_one("#resource-status", Static).render()), tries=300)
+            app.workers.cancel_all()
+            await pilot.pause()
+
+    asyncio.run(run())
 
 
 async def _run_resource_cold_cache_failure():
