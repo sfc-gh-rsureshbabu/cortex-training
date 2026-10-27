@@ -175,7 +175,7 @@ class ServingPane(_Pane):
             if at is not None and views.is_live(self._job()):
                 when = views.fmt_ago(at, datetime.now(timezone.utc))
             elif at is not None and local_time(at):
-                # A job no longer live soon stops reloading the pane, so an age would go stale.
+                # Once a deployment has ended (or been dropped) the pane soon stops reloading: an age would go stale.
                 when = f"at {local_time(at)}"
             if when:
                 text.append(f"  ·  last drain {when}", style=theme.MUTED)

@@ -22,6 +22,9 @@ from cortex_training.tui.saved_log import committed_size
 # Cheap substring checks before json.loads: most console lines are neither.
 _DRAIN_MARK = '"drain_metrics"'
 _STARTUP_MARK = '"job_metrics"'
+# A deployment drains every 30 s. A longer gap means a drain's line was lost (a skipped chunk, a
+# restart), and its requests with it: dividing what is left by the whole gap would read low.
+_LONGEST_DRAIN_GAP_S = 45.0
 
 
 @dataclass(frozen=True)
@@ -146,11 +149,11 @@ class ConsoleReader:
 
 
 def rate(prev: Optional[Drain], cur: Drain) -> Optional[float]:
-    """Requests per second over the gap since ``prev``; None for the first drain."""
+    """Requests per second over the gap since ``prev``; None for the first drain, or after a lost one."""
     if prev is None:
         return None
     gap = cur.drained_at - prev.drained_at
-    return cur.completed / gap if gap > 0 else None
+    return cur.completed / gap if 0 < gap <= _LONGEST_DRAIN_GAP_S else None
 
 
 def serving_state(job: dict, data: ServingData, *, reading: bool = False) -> str:

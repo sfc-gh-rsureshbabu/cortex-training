@@ -81,11 +81,13 @@ def test_a_failed_create_job_is_no_startup_time(tmp_path):
 
 
 def test_rate_divides_by_the_actual_gap():
-    a, b, c = (serving.parse_line(_drain(t, n)) for t, n in ((0.0, 0), (30.0, 15), (90.0, 30)))
+    a, b, c, d = (serving.parse_line(_drain(t, n)) for t, n in ((0.0, 0), (30.0, 15), (80.0, 20), (130.0, 30)))
     assert serving.rate(None, a) is None
     assert serving.rate(a, b) == 0.5
-    assert serving.rate(b, c) == 0.5  # a drain missing in between: 30 over 60 s
+    assert serving.rate(b, c) is None and serving.rate(c, d) is None  # a drain lost in between: no rate
     assert serving.rate(b, b) is None
+    late = serving.parse_line(_drain(70.0, 20))  # a drain a little late is still one drain
+    assert serving.rate(b, late) == 0.5
 
 
 def test_reader_reads_only_what_was_appended(tmp_path):
