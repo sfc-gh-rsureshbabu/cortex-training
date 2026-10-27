@@ -1184,7 +1184,7 @@ operators shows under it only while it has focus.
 | `Home` / `End` | First / last job |
 | `→` / `←` | Unfold the highlighted job's sub-jobs / fold them; on a sub-job row, `←` folds its job and moves to it. The job's row stays where it is on screen, and the list scrolls only as far as an unfolded job's sub-jobs need to show. Where there is nothing to unfold or fold, they scroll the columns sideways |
 | click `▸` / `▾` | Unfold or fold that job, as `→` / `←` do |
-| `e` | Expand or collapse every job's sub-jobs, also those of jobs that later pages of the list being read bring (jobs a later refresh adds start as usual) |
+| `e` | Expand or collapse the sub-jobs of every job in the view on screen (Jobs or Deployments; each keeps its own choice), also those of jobs that later pages of the list being read bring (jobs a later refresh adds start as usual) |
 | `a` | All schemas / current schema: switch to the account-level list of every database and schema the role can see (the footer's `a All schemas`), or back to the configured one (`a Current schema`) |
 | `d` | Deployments / Jobs: show the deployments, or the training and sampling jobs again |
 | `f` | All jobs / newest 2,000: when the configured schema's list came whole (the account-level list is unavailable) and holds more than 2,000 jobs, the list shows the newest 2,000 and every active job, as the account-level list does, and search covers those (one that matches none of them says `f searches all N jobs of the schema.`); `f` shows every job of it (drawing tens of thousands takes a few seconds), and again the newest 2,000. Refreshes keep the choice until another list is shown |
@@ -1287,7 +1287,7 @@ its record says it is a deployment.
   time. `Space` (or a click on its name) shows the next one; `<` and `>` go
   back and forth. Its pinned header names the sub-job, position,
   window, sample age and scrape interval while the stats and charts scroll: two
-  lines, and three for a deployment (see below).
+  lines, and three on a deployment's GPU view (see below).
   - The focused left panel switches between `GPU Resources` and `System
     Resources`, then `ALL` (the mean) and each GPU or node. `↑`, `↓` or a click
     selects an entry. Each unit shows its latest utilization after a four-cell

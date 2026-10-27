@@ -674,6 +674,7 @@ def test_short_seconds_picks_its_unit_after_rounding():
     assert short_seconds(0.42) == "420ms"
     assert short_seconds(0.9996) == "1.00s"  # not "1000ms"
     assert short_seconds(1.919) == "1.92s"
+    assert short_seconds(1e306) == f"{1e306:.2f}s"  # no OverflowError on a huge finite value
 
 
 def test_an_empty_search_names_what_the_view_lists():

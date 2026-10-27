@@ -44,6 +44,11 @@ def finite_number(value: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def short_seconds(seconds: float) -> str:
+    """A latency: ``420ms`` under a second, ``1.92s`` from one."""
+    return f"{seconds * 1000:.0f}ms" if seconds < 0.9995 else f"{seconds:.2f}s"
+
+
 def _drain_summary(entry: dict) -> str:
     """A serving drain's numbers, which its line alone hides: ``16 req · p50 50ms · 2 replicas``."""
     done = finite_number(entry.get("completed_requests"))
@@ -952,9 +957,3 @@ def format_execution_record(record: Any) -> list:
         if text.strip():
             out.extend(f"    {line}" for line in text.splitlines())
     return out
-
-
-def short_seconds(seconds: float) -> str:
-    """A latency: ``420ms`` under a second, ``1.92s`` from one."""
-    ms = round(seconds * 1000)
-    return f"{ms}ms" if ms < 1000 else f"{seconds:.2f}s"

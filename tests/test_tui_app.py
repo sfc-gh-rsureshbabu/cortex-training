@@ -257,8 +257,8 @@ async def _run_resource_tab(tmp_path):
         tabs = app.screen.query_one("#job-tabs", TabbedContent)
         assert tabs.active == "logs"
         # Serving is composed for every job, hidden for a training one.
-        assert {pane.id for pane in app.screen.query("TabPane")} == {"serving", "logs", "resource", "training",
-                                                                      "checkpoints"}
+        panes = {pane.id for pane in app.screen.query("TabPane")}
+        assert panes == {"serving", "logs", "resource", "training", "checkpoints"}
         c.download_metrics.assert_not_called()
 
         tabs.active = "resource"

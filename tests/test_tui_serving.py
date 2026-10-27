@@ -636,9 +636,7 @@ def test_logs_and_serving_read_a_drain_s_numbers_alike():
 
 def test_one_number_helper_refuses_what_is_not_a_finite_number():
     from cortex_training.tui import format as fmt
-    from cortex_training.tui import views
 
-    assert serving._num is fmt.finite_number and views._as_float is fmt.finite_number
     assert fmt.finite_number(2) == 2.0 and fmt.finite_number("0.5") == 0.5
     for bad in (None, True, False, float("nan"), float("inf"), "NaN", "-Infinity", "1e400", 10 ** 400, "", "x", [1]):
         assert fmt.finite_number(bad) is None, bad

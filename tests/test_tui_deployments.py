@@ -98,6 +98,23 @@ def test_a_refresh_without_sub_jobs_keeps_a_deployment_one():
     assert "sub_jobs" not in v.refresh_job(_training(), fresh)  # a job's sub-jobs go, as before
 
 
+def test_a_list_refresh_without_sub_jobs_keeps_a_deployment_in_its_view():
+    c = _client([_deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._nomatch)
+            screen = app.screen
+            [merged] = screen._merged([{"job_id": "8", "status": "UNKNOWN"}])
+            assert v.is_deployment(merged) and merged["status"] == "UNKNOWN"
+            [merged] = screen._merged([{"job_id": "8", "status": "UNKNOWN", "sub_jobs": []}])
+            assert v.is_deployment(merged)
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
 def test_preview_facts_of_a_deployment():
     facts = dict(v.preview_facts(_deployment(job_id=UUID), NOW, base_url="https://HOST/x/inference/v1"))
     assert facts["Type"] == "deployment"
@@ -223,6 +240,7 @@ def test_an_empty_view_of_a_list_cut_short_says_more_may_exist():
                 screen._scope = scope
                 screen._render_jobs()
                 assert said in screen._nomatch and "last 6 months" not in screen._nomatch, screen._nomatch
+                assert "no training or sampling jobs to show" in screen._nomatch, screen._nomatch
                 assert screen._nomatch.endswith("\n  d shows the 1 deployment."), screen._nomatch
             await _settle(app, pilot)
 

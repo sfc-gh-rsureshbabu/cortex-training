@@ -263,7 +263,8 @@ class JobSummaryScreen(FollowsPointer, Screen):
         # markup, so it shows literally. Each wrapped row's indent is a run of its
         # own too, so the text after it starts where the indent ends.
         self.query_one("#hero", Static).update(Content("\n").join(self._hero(width, now)))
-        grid, long = self._grid(v.preview_facts(job, now, base_url=v.base_url(self._client)), width)
+        base_url = v.base_url(self._client) if v.is_deployment(job) else None
+        grid, long = self._grid(v.preview_facts(job, now, base_url=base_url), width)
         self.query_one("#preview", Static).update(Content("\n").join(grid + self._lifecycle_rows(now, width)))
         self._render_fetch()
         self._render_health()
@@ -321,7 +322,8 @@ class JobSummaryScreen(FollowsPointer, Screen):
         title = v.fit_cells(v.job_id_of(job) or self._job_id, max(self._TITLE_LEAST, width - tail.cell_length))
         rows.insert(0, Content.styled(title, f"bold {theme.TEXT}") + tail)
         actions = Content("   ").join(
-            Content.assemble((key, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED)) for key, label in self._actions())
+            Content.assemble((key, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED))
+            for key, label in self._actions())
         return [*rows, actions]
 
     def _fact_rows(self, label: str, value: str, width: int) -> tuple:

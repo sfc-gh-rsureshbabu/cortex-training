@@ -1111,7 +1111,7 @@ class JobListScreen(FollowsPointer, Screen):
         return None
 
     def _merged(self, rows: list) -> list:
-        """Reuse unchanged records and retain an UNKNOWN row's known creation time."""
+        """Reuse unchanged records and retain an UNKNOWN row's known creation time (and a deployment's sub-jobs)."""
         merged = []
         for job in rows:
             if not (isinstance(job, dict) and views.job_id_of(job)):
@@ -1120,6 +1120,8 @@ class JobListScreen(FollowsPointer, Screen):
             if old is not None:
                 if not job.get("created_at") and old.get("created_at"):
                     job = {**job, "created_at": old["created_at"]}
+                if not job.get("sub_jobs") and views.is_deployment(old):
+                    job = {**job, "sub_jobs": old["sub_jobs"]}  # as views.refresh_job keeps them
                 if job == old:
                     job = old
             merged.append(job)
@@ -1529,12 +1531,13 @@ class JobListScreen(FollowsPointer, Screen):
                 if others:
                     what = "deployments" if self._deployments else "training or sampling jobs"
                 if self._scope is not None and self._scope.truncated:
-                    message = empty_text(self._scope)
+                    message = empty_text(self._scope, what)
                 elif self._scope is not None and self._scope.kind == ACCOUNT:
                     where = f"in {self._scope.narrowed}" if self._scope.narrowed else "in any database and schema"
                     message = f"No {what} created in the last 6 months that this role can see, {where}."
                 else:
-                    message = f"No {what} created in the last 6 months in {self._schema_label()} that this role can see."
+                    message = (f"No {what} created in the last 6 months in {self._schema_label()} "
+                               "that this role can see.")
                     if widen:
                         message += "\n  a lists every database and schema."
                 if others:
