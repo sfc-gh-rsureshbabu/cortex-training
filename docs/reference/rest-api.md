@@ -1134,6 +1134,7 @@ request_id = client.generate(
     sampling_params={"max_tokens": 64, "temperature": 0.7},
     routing_key="conversation-1",
     strict=False,
+    sub_job_id=f"{job_id}:sampling:1",   # optional
 )
 ```
 
@@ -1150,6 +1151,12 @@ Logical request object inside the DSSST1 frame:
 
 Rules:
 
+- `sub_job_id` is sent as a **query parameter** (`?sub_job_id=...`), not inside the
+  frame, because the server routes the request before it reads the DSSST1 body. It names
+  which sampling sub-job runs the request; discover the ids from `get_job()`'s
+  `sub_jobs`. Omit it only when the job has exactly one sampling sub-job — with more
+  than one the server rejects the request and lists the valid ids. Applies to
+  `generate-stream` identically.
 - `prompts` is a list of string prompts and/or token-id lists. A flat list of
   integers such as `[1, 2, 3]`, and a bare 1-D tensor, are each read as one
   pre-tokenized prompt rather than as a batch. For a batch of several prompts,
