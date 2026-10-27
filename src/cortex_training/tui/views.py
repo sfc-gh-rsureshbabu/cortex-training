@@ -40,6 +40,10 @@ from rich.cells import cell_len
 from cortex_training.client.core import _deployment_id_from_job_id
 from cortex_training.client.core import _model_deployment_status
 from cortex_training.client.core import _model_deployment_sub_job
+from cortex_training.model_deployment import DEPLOYMENT_STATUSES_WITHOUT_ENDPOINT
+from cortex_training.model_deployment import WIRE_DEPLOYMENT_CLASS
+from cortex_training.model_deployment import WIRE_INFERENCE_CONFIG
+from cortex_training.model_deployment import WIRE_NUM_REPLICAS
 from cortex_training.tui.format import _ACTIVE_STATUSES as ACTIVE_STATUSES
 from cortex_training.tui.format import _num as compact_number
 from cortex_training.tui.format import cut_cells
@@ -325,13 +329,15 @@ def is_deployment(job: Any) -> bool:
 def deployment_class(job: Any) -> str:
     """``EVALUATION``, ...; ``""`` for a job that isn't a deployment."""
     sj = _model_deployment_sub_job(job)
-    return str(sj["inference_config"].get("deployment_class") or "") if sj else ""
+    return str(sj[WIRE_INFERENCE_CONFIG].get(WIRE_DEPLOYMENT_CLASS) or "") if sj else ""
 
 
 def deployment_sub_job_id(job: Any) -> Optional[str]:
-    """The sub-job that serves the deployment."""
-    sj = _model_deployment_sub_job(job)
-    return str(sj["sub_job_id"]) if sj and sj.get("sub_job_id") else None
+    """The sub-job that serves the deployment; an UNKNOWN one's is derived as :func:`sub_jobs` does."""
+    if _model_deployment_sub_job(job) is None:
+        return None
+    sid = sub_jobs(job)[0].get("sub_job_id")
+    return str(sid) if sid else None
 
 
 def status_word_for(job: Any, status: Any) -> str:
@@ -357,8 +363,8 @@ def _call_as(job: dict) -> str:
 
 def deployment_facts(job: dict) -> list:
     """The preview's deployment rows: class, replicas, idle timeout and the model name to call."""
-    cfg = _model_deployment_sub_job(job)["inference_config"]
-    replicas = _as_float(cfg.get("num_replicas"))
+    cfg = _model_deployment_sub_job(job)[WIRE_INFERENCE_CONFIG]
+    replicas = _as_float(cfg.get(WIRE_NUM_REPLICAS))
     idle = _as_float(job.get("idle_timeout_seconds"))
     call_as = _call_as(job)
     return [
@@ -574,7 +580,9 @@ def preview_facts(job: dict, now: datetime, *, base_url: str = "") -> list:
         *([("Schema", location)] if location else []),
     ]
     if is_deployment(job):
-        facts[2:2] = [*deployment_facts(job), *([("Base URL", base_url)] if base_url else [])]
+        # The CLI's rule: a deployment that failed or is being dropped no longer serves.
+        serves = _model_deployment_status(job) not in DEPLOYMENT_STATUSES_WITHOUT_ENDPOINT
+        facts[2:2] = [*deployment_facts(job), *([("Base URL", base_url)] if base_url and serves else [])]
     return facts
 
 
@@ -1039,9 +1047,11 @@ def _compare(actual: Any, op: str, wanted: str) -> bool:
 
 
 def search_haystack(job: dict) -> str:
-    """Folded id, status, owner, GPU, job types, and models."""
+    """Folded id, status, owner, GPU, job types, and models; a deployment's status word and class too."""
     bits = [job_id_of(job), status_word(job.get("status")), owner(job),
             job.get("hardware") or "", job_type_label(job)]
+    if is_deployment(job):
+        bits += [status_word_for(job, job.get("status")), deployment_class(job)]
     bits += job_types(job) + _raw_job_types(job) + job_models(job)
     bits += [s.get("sub_job_id") or "" for s in sub_jobs(job)]  # ids copied from logs or --sub-job-id
     return fold(" ".join(str(b) for b in bits))

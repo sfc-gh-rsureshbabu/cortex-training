@@ -5,12 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from datetime import timezone
-
-from cortex_training.tui import views as v
-
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +17,7 @@ pytest.importorskip("textual")
 from textual.widgets import Static  # noqa: E402
 
 from cortex_training import AccountJobListUnavailable  # noqa: E402
+from cortex_training.tui import views as v  # noqa: E402
 from cortex_training.tui.app import CortexTrainingLogTUI  # noqa: E402
 from cortex_training.tui.job_list import JobListScreen  # noqa: E402
 
@@ -60,6 +58,13 @@ def test_the_cli_s_rule_tells_a_deployment_apart():
     assert v.deployment_sub_job_id(_training()) is None
 
 
+def test_an_unknown_deployment_without_sub_job_ids_still_names_its_sub_job():
+    job = _deployment(status="UNKNOWN")
+    del job["sub_jobs"][0]["sub_job_id"]
+    assert v.is_deployment(job)
+    assert v.deployment_sub_job_id(job) == DEPLOY  # the id views.sub_jobs derives, as the Logs tab shows it
+
+
 def test_a_deployment_s_status_reads_in_deployment_words():
     assert v.status_word_for(_deployment(), "RUNNING") == "ready"
     assert v.status_word_for(_deployment(), "JOB_STATE_PLACING") == "initializing"
@@ -77,6 +82,11 @@ def test_a_deployment_reads_deployment_in_the_type_column_and_search():
     assert not v.job_matches_query(_sampling(), v.parse_query("type:deployment"))
     assert v.job_matches_query(job, v.parse_query("class:evaluation"))
     assert not v.job_matches_query(_training(), v.parse_query("class:evaluation"))
+    # The words the view shows match as free text too.
+    for word in ("ready", "evaluation"):
+        assert v.job_matches_query(job, v.parse_query(word)), word
+    assert v.job_matches_query(_deployment("CANCELLED"), v.parse_query("dropped"))
+    assert not v.job_matches_query(_training(), v.parse_query("ready"))
 
 
 def test_preview_facts_of_a_deployment():
@@ -89,6 +99,10 @@ def test_preview_facts_of_a_deployment():
     assert facts["Base URL"] == "https://HOST/x/inference/v1"
     assert dict(v.preview_facts(_deployment(idle_timeout_seconds=1800), NOW))["Idle timeout"] == "30m 00s"
     assert "Base URL" not in dict(v.preview_facts(_deployment(), NOW))
+    # The CLI's rule: a deployment that failed or is dropped no longer serves at that URL.
+    for status in ("FAILED", "CANCELLING", "CANCELLED", "TERMINATED"):
+        assert "Base URL" not in dict(v.preview_facts(_deployment(status), NOW, base_url="https://HOST/v1")), status
+    assert "Base URL" in dict(v.preview_facts(_deployment("PENDING"), NOW, base_url="https://HOST/v1"))
     # The client's helper refuses an ID that isn't a canonical UUID; the TUI then names no model.
     assert "Call as" not in dict(v.preview_facts(_deployment(job_id="8"), NOW))
     assert "Class" not in dict(v.preview_facts(_training(), NOW))
@@ -206,8 +220,12 @@ def test_a_search_covers_only_the_view_on_screen():
             screen = app.screen
             await pilot.press("d")
             assert await _wait(pilot, lambda: _ids(screen) == {"8"})
-            await pilot.press("/", *"class:evaluation", "enter")
-            assert await _wait(pilot, lambda: _ids(screen) == {"8"} and screen._filter == "class:evaluation")
+            # Both jobs have a sampling sub-job: only the one in this view may show.
+            assert v.job_matches_query(_training(), v.parse_query("sampling"))
+            await pilot.press("/", *"sampling", "enter")
+            assert await _wait(pilot, lambda: screen._filter == "sampling" and screen._job_by_item)
+            await pilot.pause(0.05)
+            assert _ids(screen) == {"8"}
             await _settle(app, pilot)
 
     asyncio.run(run())
