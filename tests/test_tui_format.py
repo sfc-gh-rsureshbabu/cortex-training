@@ -647,6 +647,16 @@ def test_a_quiet_drain_and_other_lines_stay_as_they_are():
     assert format_log_entry({"msg": "drain_metrics", "completed_requests": True}).endswith("drain_metrics")
 
 
+def test_a_live_drain_line_says_its_numbers_on_the_logs_pane():
+    # The pane draws a tail or console line through display_line, not format_log_entry.
+    raw = ('2026-06-12T00:00:01.123456789Z {"ts": "2026-06-12T00:00:01Z", "level": "INFO", '
+           '"logger": "app.server", "msg": "drain_metrics", "completed_requests": 10, '
+           '"latency_s_p50": 0.042, "ttft_s_p99": 0.034, "replica_count": 1, "replica_errors": 0}')
+    assert display_line(raw).endswith("drain_metrics  10 req · p50 42ms · ttft p99 34ms · 1 replica")
+    plain = '2026-06-12T00:00:01Z {"level": "INFO", "msg": "drain_metrics"}'
+    assert display_line(plain).endswith("drain_metrics")
+
+
 def test_a_drain_line_with_non_finite_numbers_does_not_crash():
     # json.loads accepts NaN and Infinity, which int() refuses.
     entry = json.loads('{"msg": "drain_metrics", "completed_requests": NaN, "replica_count": Infinity}')

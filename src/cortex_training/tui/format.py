@@ -371,6 +371,8 @@ def _record_lines(record: dict, when: str, actors: str) -> str:
     if logger := _first_field(record, _RECORD_LOGGER_FIELDS):
         head.append(f"{logger}:")
     head.append(msg if isinstance(msg, str) else json.dumps(msg, sort_keys=True))
+    if msg == "drain_metrics" and (summary := _drain_summary(record)):
+        head[-1] = f"{msg}  {summary}"
     lines = [" ".join(part for part in head if part)]
     for field in _ERROR_FIELDS:
         text = _failure_text(record.get(field)).strip()
