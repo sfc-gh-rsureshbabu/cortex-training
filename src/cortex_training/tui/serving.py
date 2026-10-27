@@ -1,7 +1,7 @@
 # Copyright 2025 Snowflake Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A deployment's serving numbers: the ``drain_metrics`` summary the zone head writes to the
+"""A deployment's serving numbers: the ``drain_metrics`` summary the deployment writes to the
 console every 30 s (requests, latency, queue, KV cache, replicas), read from the saved console."""
 
 from __future__ import annotations
