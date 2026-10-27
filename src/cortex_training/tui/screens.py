@@ -309,7 +309,8 @@ class JobSummaryScreen(FollowsPointer, Screen):
         """The card's head, as rows: the job id, its status pill and how long it
         has been going; then the next steps' keys."""
         job = self._job
-        pill = theme.status_pill(job.get("status"), word=v.status_word_for(job, job.get("status")))
+        word = v.status_word_for(job, job.get("status")) if v.is_deployment(job) else None
+        pill = theme.status_pill(job.get("status"), word=word)
         elapsed = v.elapsed_text(job, now)
         tail = Content.assemble("   ", pill, *(("   ", (elapsed, theme.MUTED)) if elapsed else ()))
         rows = []

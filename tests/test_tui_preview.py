@@ -368,3 +368,24 @@ def test_a_training_job_s_preview_has_no_serving_key():
 
     asyncio.run(run())
 
+
+
+def test_a_job_without_a_status_keeps_its_unknown_pill():
+    job = _job(None, sub_jobs=[{"sub_job_id": "JOB_ID:training:0", "job_type": "training"}])
+    client = MagicMock()
+    client.list_jobs.return_value = [job]
+    client.get_job.return_value = job
+
+    async def run():
+        app = CortexTrainingLogTUI(client, poll_interval=0.01)
+        async with app.run_test(size=(150, 42)) as pilot:
+            app.push_screen(JobSummaryScreen(client, "JOB_ID", job=job))
+            for _ in range(50):
+                await pilot.pause(0.02)
+                if isinstance(app.screen, JobSummaryScreen) and _rows(app, "#hero")[0].strip():
+                    break
+            assert " ? UNKNOWN " in _rows(app, "#hero")[0]  # the pill reads as it did before deployments
+            app.workers.cancel_all()
+            await pilot.pause(0.1)
+
+    asyncio.run(run())
