@@ -27,7 +27,9 @@ From a base model:
 ```
 
 From a training run, point `source` at a completed `weights-only` checkpoint.
-It names no model; the client reads it from the training job:
+It names no model; the client reads it from the training job. LoRA checkpoints
+work the same way: the deployment serves the base model with your adapter,
+using the LoRA settings of the training job.
 
 ```json
 "source": {"type": "checkpoint", "job_id": "TRAINING_JOB_UUID", "checkpoint_id": "CHECKPOINT_ID"}
@@ -69,12 +71,7 @@ From Python:
 ```python
 from cortex_training import CortexTrainingClient
 
-client = CortexTrainingClient.from_pat(
-    host="ACCOUNT.snowflakecomputing.com",
-    pat=PAT,
-    database="CORTEX_TRAINING_DB",
-    schema="PUBLIC",
-)
+client = CortexTrainingClient.from_configs(database="CORTEX_TRAINING_DB", schema="PUBLIC")
 deployment_id = client.create_model_deployment(spec)["deployment"]
 ready = client.wait_for_model_deployment(deployment_id)
 base_url = ready["base_url"]
@@ -83,8 +80,11 @@ base_url = ready["base_url"]
 ## 3. Stream a chat completion
 
 Authenticate with the same programmatic access token (PAT) and pass the
-deployment ID as `model`. Inference is not yet available on all accounts;
-until it is enabled for yours, requests return HTTP 404.
+deployment ID as `model`. Call it once the deployment is `READY`: before that,
+requests return HTTP 503 (`endpoint_failed`). An unknown, failed, or dropped
+deployment returns HTTP 404. Inference is not yet available on all accounts;
+until it is enabled for yours, requests return HTTP 403 or 405. See
+[REST API reference section 14.8](../../reference/rest-api.md#148-calling-a-deployment).
 
 With the `openai` package:
 

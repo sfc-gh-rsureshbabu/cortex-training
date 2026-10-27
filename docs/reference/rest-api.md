@@ -3289,6 +3289,12 @@ server already knows the source job's model and rejects one that does not
 match it, so `create` reads the training sub-job's `model_name` from
 `GET /{source job_id}` and sends that. `model` is rejected as an unknown key.
 
+The checkpoint can come from a full fine-tune or a LoRA training job. For a
+LoRA checkpoint, the server copies the source training sub-job's
+`training_config.peft_config` into the deployment, so it serves the base model
+with the trained adapter. The spec has no LoRA settings, and `peft_config`
+cannot be set on a deployment.
+
 Client-side checks (all others are left to the server):
 
 | Field | Rule |
@@ -3462,7 +3468,9 @@ streaming example (`examples/model_deployment/streaming.py`) codes against it.
 | Auth | `Authorization: Bearer <PAT>` and `X-Snowflake-Authorization-Token-Type: PROGRAMMATIC_ACCESS_TOKEN` |
 | `model` | The deployment ID, `sf-ct-<UUID>`; responses echo it as `model` |
 | Length limit | `max_completion_tokens`. `max_tokens` is rejected with HTTP 400, `{"error": {"type": "invalid_request_error", "param": "max_tokens", "code": "unsupported_parameter"}}` |
-| Not enabled | HTTP 404 while inference is not enabled for the account |
+| Not ready | HTTP 503 `endpoint_failed` while the deployment is `PENDING` or `INITIALIZING`, and briefly after it is dropped. Retry, or check its status with `get_model_deployment` |
+| Not found | HTTP 404 `model_not_found` for an unknown or malformed ID, or a deployment that has failed or been dropped |
+| Not enabled | HTTP 403 `feature_disabled` while model deployments are not enabled for the account, or HTTP 405 while the inference routes are not |
 
 Without `stream`, the response is one `chat.completion` object with
 `choices[0].message.content`, `finish_reason`, and `usage`.
