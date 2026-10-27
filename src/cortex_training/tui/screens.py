@@ -240,11 +240,7 @@ class JobSummaryScreen(FollowsPointer, Screen):
         if action == "collapse_values":
             return self._long and self._expanded
         if action == "open" and parameters:
-            # A deployment's job screen has Serving and no Training metrics or Checkpoints (see LogScreen._tabs).
-            if parameters[0] == "serving":
-                return v.is_deployment(self._job)
-            if parameters[0] in ("training", "checkpoints"):
-                return not v.is_deployment(self._job)
+            return parameters[0] in v.job_tabs(self._job)
         return True
 
     def action_expand_values(self) -> None:
@@ -301,11 +297,13 @@ class JobSummaryScreen(FollowsPointer, Screen):
 
     # The next steps from here, under the title: the footer has them too, but it
     # cuts its end on a narrow screen, and these say what each one opens.
-    _ACTIONS = (("l", "Logs"), ("g", "Resources"), ("c", "Checkpoints"))
-    _DEPLOYMENT_ACTIONS = (("v", "Serving"), ("l", "Logs"), ("g", "Resources"))
+    # m (Training metrics) stays out, as in the footer.
+    _ACTIONS = (("serving", "v", "Serving"), ("logs", "l", "Logs"), ("resource", "g", "Resources"),
+                ("checkpoints", "c", "Checkpoints"))
 
     def _actions(self) -> tuple:
-        return self._DEPLOYMENT_ACTIONS if v.is_deployment(self._job) else self._ACTIONS
+        tabs = v.job_tabs(self._job)
+        return tuple((key, label) for tab, key, label in self._ACTIONS if tab in tabs)
 
     def _hero(self, width: int, now: datetime) -> list:
         """The card's head, as rows: the job id, its status pill and how long it

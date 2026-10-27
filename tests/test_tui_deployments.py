@@ -346,3 +346,18 @@ def test_an_empty_view_keeps_the_scope_s_words_and_the_widen_hint():
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_one_helper_says_which_tabs_a_job_has(monkeypatch):
+    from cortex_training.tui.logs import LogScreen
+    from cortex_training.tui.screens import JobSummaryScreen
+
+    assert v.job_tabs(_deployment()) == ("serving", "logs", "resource")
+    assert v.job_tabs(_training()) == ("logs", "resource", "training", "checkpoints")
+    # The job screen's tabs and the preview's keys both follow it.
+    monkeypatch.setattr(v, "job_tabs", lambda job: ("logs", "checkpoints"))
+    log_screen = LogScreen(MagicMock(), "8", job=_deployment())
+    assert log_screen._tabs() == ("logs", "checkpoints")
+    preview = JobSummaryScreen(MagicMock(), "8", job=_deployment())
+    assert [preview.check_action("open", (tab,)) for tab in ("serving", "logs", "checkpoints")] == [False, True, True]
+    assert preview._actions() == (("l", "Logs"), ("c", "Checkpoints"))

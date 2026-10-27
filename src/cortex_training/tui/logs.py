@@ -188,10 +188,8 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
     # its import of the Snowflake Connector would slow, or this long after the screen opens.
     _WARM_UP_AFTER_SECONDS = 1.5
     _LOG_ONLY = {"save_log", "cycle_level", "toggle_pause", "shrink_sources", "grow_sources", "filter", "jump"}
-    # Every tab in compose order; t cycles the job's kind's own (see _tabs).
+    # Every tab in compose order; t cycles the job's kind's own (views.job_tabs).
     _TABS = ("serving", "logs", "resource", "training", "checkpoints")
-    _JOB_TABS = ("logs", "resource", "training", "checkpoints")
-    _DEPLOYMENT_TABS = ("serving", "logs", "resource")
     _TAB_NAMES = {"serving": "Serving", "logs": "Logs", "resource": "Resources", "training": "Training metrics",
                   "checkpoints": "Checkpoints"}
 
@@ -459,7 +457,7 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         return True
 
     def _tabs(self) -> tuple:
-        return self._DEPLOYMENT_TABS if views.is_deployment(self._job) else self._JOB_TABS
+        return views.job_tabs(self._job)
 
     def _apply_tabs(self) -> None:
         """UI thread. Show the tabs of the job's kind; a job opened by id learns it from its record."""

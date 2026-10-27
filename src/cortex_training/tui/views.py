@@ -341,6 +341,14 @@ def deployment_sub_job_id(job: Any) -> Optional[str]:
     return str(sid) if sid else None
 
 
+def job_tabs(job: Any) -> tuple:
+    """The job screen's tabs for ``job``, in order: a deployment has Serving and no Training
+    metrics or Checkpoints."""
+    if is_deployment(job):
+        return ("serving", "logs", "resource")
+    return ("logs", "resource", "training", "checkpoints")
+
+
 def status_word_for(job: Any, status: Any) -> str:
     """``status`` (the job's, or one of its sub-jobs') as the screens word it: a
     deployment's in the CLI's deployment words (``RUNNING`` -> ``ready``)."""
