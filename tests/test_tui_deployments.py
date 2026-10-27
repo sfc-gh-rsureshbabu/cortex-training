@@ -91,6 +91,13 @@ def test_a_deployment_reads_deployment_in_the_type_column_and_search():
     assert not v.job_matches_query(_training(), v.parse_query("ready"))
 
 
+def test_a_refresh_without_sub_jobs_keeps_a_deployment_one():
+    fresh = {"job_id": "8", "status": "UNKNOWN"}
+    assert v.is_deployment(v.refresh_job(_deployment(), fresh))
+    assert v.refresh_job(_deployment(), fresh)["status"] == "UNKNOWN"
+    assert "sub_jobs" not in v.refresh_job(_training(), fresh)  # a job's sub-jobs go, as before
+
+
 def test_preview_facts_of_a_deployment():
     facts = dict(v.preview_facts(_deployment(job_id=UUID), NOW, base_url="https://HOST/x/inference/v1"))
     assert facts["Type"] == "deployment"
@@ -342,6 +349,8 @@ def test_e_in_one_view_leaves_the_other_view_s_folds_be():
             await pilot.press("e")
             assert await _wait(pilot, lambda: not screen._is_expanded(job["8"]))
             assert screen._is_expanded(job["7"])
+            later = {**_training(), "job_id": "12"}  # a job of the other view listed after it (a later page)
+            assert screen._is_expanded(later)
             await _settle(app, pilot)
 
     asyncio.run(run())

@@ -956,4 +956,5 @@ def format_execution_record(record: Any) -> list:
 
 def short_seconds(seconds: float) -> str:
     """A latency: ``420ms`` under a second, ``1.92s`` from one."""
-    return f"{seconds * 1000:.0f}ms" if seconds < 1 else f"{seconds:.2f}s"
+    ms = round(seconds * 1000)
+    return f"{ms}ms" if ms < 1000 else f"{seconds:.2f}s"

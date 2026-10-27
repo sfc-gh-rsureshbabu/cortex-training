@@ -352,7 +352,8 @@ class JobListScreen(FollowsPointer, Screen):
         self._descending = True
         self._expanded: set = set()
         self._collapsed: set = set()  # jobs folded by the reader (or by an e that holds no more)
-        self._all_folded: bool | None = None  # e: every job folded (True) or unfolded (False); None before
+        # e, per view (deployments or not): every job folded (True) or unfolded (False); None before
+        self._all_folded: dict[bool, bool | None] = {False: None, True: None}
         self._last_refreshed = None
         self._loaded_at: float | None = None  # monotonic time of the last good load
         self._failed_at: str | None = None  # HH:MM:SS of the last failed load, while it stands
@@ -818,7 +819,8 @@ class JobListScreen(FollowsPointer, Screen):
         if job_key in self._expanded:
             return True
         # e's choice holds for the jobs listed after it, too (a later page's).
-        return self._starts_unfolded(job) if self._all_folded is None else not self._all_folded
+        folded = self._all_folded[views.is_deployment(job)]
+        return self._starts_unfolded(job) if folded is None else not folded
 
     @staticmethod
     def _starts_unfolded(job: dict) -> bool:
@@ -899,29 +901,23 @@ class JobListScreen(FollowsPointer, Screen):
         with_subs = [j for j in self._in_view(self._all_jobs) if self._expandable(j)]
         # Every job folded, or every one unfolded: those listed since too; a fold or unfold
         # after it is the job's own.
-        folded = bool(with_subs) and all(self._is_expanded(j) for j in with_subs)
-        for job in self._all_jobs:
-            key = self._job_key(job)
-            if views.is_deployment(job) == self._deployments:
-                self._expanded.discard(key)
-                self._collapsed.discard(key)
-            elif self._expandable(job):  # the other view keeps its folds as they are
-                (self._expanded if self._is_expanded(job) else self._collapsed).add(key)
-        self._all_folded = folded
+        self._all_folded[self._deployments] = bool(with_subs) and all(self._is_expanded(j) for j in with_subs)
+        for job in self._in_view(self._all_jobs):
+            self._expanded.discard(self._job_key(job))
+            self._collapsed.discard(self._job_key(job))
         self._render_jobs()
 
     def _settle_folds(self) -> None:
         """e's choice holds for the list in front of the reader (and its later pages): once
         another list comes (a, or a refresh), the jobs it covered keep it, each as its own fold,
         and jobs new since start as every job does (live unfolded, history folded)."""
-        if self._all_folded is None:
-            return
-        chosen = self._collapsed if self._all_folded else self._expanded
         for job in self._all_jobs:
+            folded = self._all_folded[views.is_deployment(job)]
             key = self._job_key(job)
-            if key not in self._expanded and key not in self._collapsed and self._expandable(job):
-                chosen.add(key)
-        self._all_folded = None
+            if (folded is not None and key not in self._expanded and key not in self._collapsed
+                    and self._expandable(job)):
+                (self._collapsed if folded else self._expanded).add(key)
+        self._all_folded = {False: None, True: None}
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "jobfilter":
@@ -1519,15 +1515,15 @@ class JobListScreen(FollowsPointer, Screen):
                 # A schema's whole list held to its newest jobs: f searches every one of them.
                 everything = (len(self._cut_listing.everything)
                               if self._cut_listing is not None and not self._full_list else 0)
-                # The new search fields (type:deployment, class:) can only ever match in the other view.
                 there = sum(1 for job in everyone if views.is_deployment(job) != self._deployments
                             and views.job_matches_query(job, query, home=home, hay=self._haystack(job)))
                 noun = "job" if self._deployments else "deployment"
+                noun_here = "deployment" if self._deployments else "job"
                 elsewhere = f"d shows the {there:,} matching {noun}{'' if there == 1 else 's'}." if there else ""
                 found = dict(cut=loaded_text(self._scope), older=self._older_matches(query) if hidden else (),
                              location=self._schema_label() if one else "", widen=widen, narrow=narrow,
                              everything=everything, elsewhere=elsewhere)
-                message = views.no_match_message(self._filter, query, len(recent), **found)
+                message = views.no_match_message(self._filter, query, len(recent), noun=noun_here, **found)
             else:
                 what = "jobs"
                 if others:

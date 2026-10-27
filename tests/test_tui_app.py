@@ -4640,7 +4640,7 @@ async def _run_e_holds_for_its_list_and_jobs_a_refresh_adds_start_as_usual(fold)
         assert all(screen._is_expanded(job) is not fold for job in listed)  # e's choice holds for them
         by_id = {views.job_id_of(job): job for job in screen._all_jobs}
         assert screen._is_expanded(by_id["new-live-job"]) and not screen._is_expanded(by_id["new-ended-job"])
-        assert screen._all_folded is None
+        assert screen._all_folded == {False: None, True: None}
         await _settle(app, pilot)
 
 

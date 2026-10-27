@@ -364,7 +364,7 @@ def base_url(client: Any) -> str:
 
 def _call_as(job: dict) -> str:
     try:
-        return _deployment_id_from_job_id(job.get("job_id"))
+        return _deployment_id_from_job_id(job_id_of(job))
     except ValueError:  # the client won't name this job; neither does the TUI
         return ""
 
@@ -779,6 +779,9 @@ SERVICE_FIELDS = ("status", "reason", "reason_details", "updated_at", "state_cha
 def refresh_job(current: Optional[dict], fresh: dict) -> dict:
     """``current`` (say, a list row) updated with a fresh ``get_job`` answer (see :data:`SERVICE_FIELDS`)."""
     kept = {k: val for k, val in (current or {}).items() if k not in SERVICE_FIELDS}
+    if not fresh.get("sub_jobs") and is_deployment(current):
+        # An answer without sub-jobs (an UNKNOWN job, say) doesn't make a deployment a job.
+        fresh = {**fresh, "sub_jobs": current["sub_jobs"]}
     return {**kept, **fresh}
 
 
@@ -1227,16 +1230,16 @@ def narrowable_name(name: str) -> bool:
 
 def no_match_message(text: str, query: Query, searched: int, *, cut: str = "", older: Iterable[str] = (),
                      location: str = "", widen: bool = False, narrow: bool = False, everything: int = 0,
-                     elsewhere: str = "") -> str:
+                     elsewhere: str = "", noun: str = "job") -> str:
     """Explain an empty search, including truncated, old, or wider matches; ``elsewhere`` says
-    where the other view's matches are."""
+    where the other view's matches are, and ``noun`` what the view on screen lists."""
     older = list(older)
     if cut:
-        lines = [f"No jobs match “{text}” among the {searched:,} job(s) loaded: {cut}.",
+        lines = [f"No {noun}s match “{text}” among the {searched:,} {noun}(s) loaded: {cut}.",
                  "  Search covers only the loaded jobs."]
     else:
         where = f" in {location}" if location else ""
-        lines = [f"No jobs match “{text}” among {searched:,} job(s){where} in the last 6 months."]
+        lines = [f"No {noun}s match “{text}” among {searched:,} {noun}(s){where} in the last 6 months."]
     if everything:
         lines.append(f"  f searches all {everything:,} jobs of the schema.")
     if older:

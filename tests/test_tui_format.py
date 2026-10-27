@@ -666,3 +666,18 @@ def test_a_drain_line_with_non_finite_numbers_does_not_crash():
     assert format_log_entry(entry).endswith("drain_metrics  3 req")
     entry = json.loads('{"msg": "drain_metrics", "completed_requests": 2, "replica_count": 1' + "0" * 400 + '}')
     assert format_log_entry(entry).endswith("drain_metrics  2 req")
+
+
+def test_short_seconds_picks_its_unit_after_rounding():
+    from cortex_training.tui.format import short_seconds
+
+    assert short_seconds(0.42) == "420ms"
+    assert short_seconds(0.9996) == "1.00s"  # not "1000ms"
+    assert short_seconds(1.919) == "1.92s"
+
+
+def test_an_empty_search_names_what_the_view_lists():
+    query = parse_query("x")
+    assert no_match_message("x", query, 3).startswith("No jobs match “x” among 3 job(s)")
+    said = no_match_message("x", query, 3, noun="deployment")
+    assert said.startswith("No deployments match “x” among 3 deployment(s)"), said
