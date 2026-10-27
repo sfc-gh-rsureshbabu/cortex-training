@@ -48,10 +48,12 @@ from cortex_training.tui.widgets import close_keys_panel
 from cortex_training.tui.widgets import hanging
 from cortex_training.tui.widgets import is_shown
 
-def status_text(status) -> Text:
+def status_text(status, word=None) -> Text:
     """A status as the sub-job table shows it, a badge: ``● RUNNING``, in the
-    theme's glyph and color for it (:func:`~cortex_training.tui.theme.status_badge`)."""
-    word = v.status_word(status)
+    theme's glyph and color for it (:func:`~cortex_training.tui.theme.status_badge`).
+    ``word`` overrides the word shown (a deployment's own status words), colors
+    still come from ``status`` itself."""
+    word = word if word is not None else v.status_word(status)
     look = theme.status_look(status)
     return Text.assemble((f"{look.glyph} ", look.color), (word.upper(), look.style)) if word != "?" else Text("?")
 
@@ -116,6 +118,7 @@ class JobSummaryScreen(FollowsPointer, Screen):
         ("g", "open('resource')", "Resources"),
         Binding("m", "open('training')", "Training metrics", show=False),
         ("c", "open('checkpoints')", "Checkpoints"),
+        ("v", "open('serving')", "Serving"),
         ("r", "refresh", "Refresh"),
         # check_action exposes the applicable expansion binding.
         Binding("e", "expand_values", "Full text"),
@@ -235,6 +238,12 @@ class JobSummaryScreen(FollowsPointer, Screen):
             return self._long and not self._expanded
         if action == "collapse_values":
             return self._long and self._expanded
+        if action == "open" and parameters:
+            # A deployment's job screen has Serving and no Training metrics or Checkpoints (see LogScreen._tabs).
+            if parameters[0] == "serving":
+                return v.is_deployment(self._job)
+            if parameters[0] in ("training", "checkpoints"):
+                return not v.is_deployment(self._job)
         return True
 
     def action_expand_values(self) -> None:
@@ -257,7 +266,7 @@ class JobSummaryScreen(FollowsPointer, Screen):
         # markup, so it shows literally. Each wrapped row's indent is a run of its
         # own too, so the text after it starts where the indent ends.
         self.query_one("#hero", Static).update(Content("\n").join(self._hero(width, now)))
-        grid, long = self._grid(v.preview_facts(job, now), width)
+        grid, long = self._grid(v.preview_facts(job, now, base_url=v.base_url(self._client)), width)
         self.query_one("#preview", Static).update(Content("\n").join(grid + self._lifecycle_rows(now, width)))
         self._render_fetch()
         self._render_health()
@@ -282,19 +291,25 @@ class JobSummaryScreen(FollowsPointer, Screen):
         card = self.query_one("#subjobs-card")
         card.border_title = Content.styled(" Sub-jobs ", f"bold {theme.TEXT}")
         card.border_subtitle = Content.styled(f" {' · '.join(hints)} ", theme.MUTED)
-        if long != self._long:
-            self._long = long
-            self.refresh_bindings()  # e appears in the footer, or goes
+        self._long = long
+        # Textual only redraws the footer when a binding's availability changed, so this is cheap
+        # even though nothing (e's or v/c's) usually did: e appears in the footer, or goes, and the
+        # job may have turned out to be a deployment, after a reload by id.
+        self.refresh_bindings()
 
     # The next steps from here, under the title: the footer has them too, but it
     # cuts its end on a narrow screen, and these say what each one opens.
     _ACTIONS = (("l", "Logs"), ("g", "Resources"), ("c", "Checkpoints"))
+    _DEPLOYMENT_ACTIONS = (("v", "Serving"), ("l", "Logs"), ("g", "Resources"))
+
+    def _actions(self) -> tuple:
+        return self._DEPLOYMENT_ACTIONS if v.is_deployment(self._job) else self._ACTIONS
 
     def _hero(self, width: int, now: datetime) -> list:
         """The card's head, as rows: the job id, its status pill and how long it
         has been going; then the next steps' keys."""
         job = self._job
-        pill = theme.status_pill(job.get("status"))
+        pill = theme.status_pill(job.get("status"), word=v.status_word_for(job, job.get("status")))
         elapsed = v.elapsed_text(job, now)
         tail = Content.assemble("   ", pill, *(("   ", (elapsed, theme.MUTED)) if elapsed else ()))
         rows = []
@@ -305,7 +320,7 @@ class JobSummaryScreen(FollowsPointer, Screen):
         title = v.fit_cells(v.job_id_of(job) or self._job_id, max(self._TITLE_LEAST, width - tail.cell_length))
         rows.insert(0, Content.styled(title, f"bold {theme.TEXT}") + tail)
         actions = Content("   ").join(
-            Content.assemble((key, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED)) for key, label in self._ACTIONS)
+            Content.assemble((key, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED)) for key, label in self._actions())
         return [*rows, actions]
 
     def _fact_rows(self, label: str, value: str, width: int) -> tuple:
@@ -411,7 +426,8 @@ class JobSummaryScreen(FollowsPointer, Screen):
         """The sub-job table's rows as ``(key, cells)``; also maps each row to its scope."""
         self._scope_by_row = {"all": None}
         self._sub_job_by_row = {}
-        rows = [("all", [Text("▸ entire job", style="bold"), Text(v.job_type_label(job)), status_text(job.get("status")),
+        rows = [("all", [Text("▸ entire job", style="bold"), Text(v.job_type_label(job)),
+                         status_text(job.get("status"), word=v.status_word_for(job, job.get("status"))),
                          Text(", ".join(v.job_models(job)) or "—"), Text(v.job_gpu_cell(job, "requested"))])]
         if v.is_unknown(job):
             rows.append(("note", [Text("  ? status unavailable", style=theme.WARN), Text(""), status_text("unknown"),
@@ -421,8 +437,8 @@ class JobSummaryScreen(FollowsPointer, Screen):
             self._scope_by_row[key] = sj.get("sub_job_id")
             self._sub_job_by_row[key] = sj
             rows.append((key, [Text(f"  {v.sub_job_label(sj)}"), Text(v.sub_job_type(sj)),
-                               status_text(sj.get("status")), Text(str(sj.get("model_name") or "—")),
-                               Text(v.sub_job_gpu_text(sj))]))
+                               status_text(sj.get("status"), word=v.status_word_for(job, sj.get("status"))),
+                               Text(str(sj.get("model_name") or "—")), Text(v.sub_job_gpu_text(sj))]))
         return rows
 
     # Sub-jobs' configs go side by side on the job's row while each column has
