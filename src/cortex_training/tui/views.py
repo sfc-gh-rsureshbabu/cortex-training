@@ -779,10 +779,15 @@ SERVICE_FIELDS = ("status", "reason", "reason_details", "updated_at", "state_cha
 def refresh_job(current: Optional[dict], fresh: dict) -> dict:
     """``current`` (say, a list row) updated with a fresh ``get_job`` answer (see :data:`SERVICE_FIELDS`)."""
     kept = {k: val for k, val in (current or {}).items() if k not in SERVICE_FIELDS}
-    if not fresh.get("sub_jobs") and is_deployment(current):
-        # An answer without sub-jobs (an UNKNOWN job, say) doesn't make a deployment a job.
-        fresh = {**fresh, "sub_jobs": current["sub_jobs"]}
-    return {**kept, **fresh}
+    return {**kept, **keep_deployment(current, fresh)}
+
+
+def keep_deployment(old: Any, fresh: dict) -> dict:
+    """``fresh``, still a deployment if ``old`` was one and ``fresh`` (an UNKNOWN answer, say)
+    has no sub-jobs: it gets ``old``'s, without their statuses, which are no longer known."""
+    if fresh.get("sub_jobs") or not is_deployment(old):
+        return fresh
+    return {**fresh, "sub_jobs": [{k: val for k, val in sj.items() if k != "status"} for sj in old["sub_jobs"]]}
 
 
 # field -> help text; the field names users type in the search box.
@@ -990,7 +995,7 @@ def field_values(job: dict, key: str, *, home: Optional[tuple] = None) -> list:
     if key == "id":
         return [job_id_of(job)] + [str(s.get("sub_job_id") or "") for s in subs]
     if key == "status":
-        return [status_word(job.get("status"))]
+        return list(dict.fromkeys([status_word(job.get("status")), status_word_for(job, job.get("status"))]))
     if key == "owner":
         return [str(v) for v in (job.get("submitted_by"), job.get("owner_role")) if v]
     if key == "type":

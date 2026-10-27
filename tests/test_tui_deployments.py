@@ -88,6 +88,9 @@ def test_a_deployment_reads_deployment_in_the_type_column_and_search():
     for word in ("ready", "evaluation"):
         assert v.job_matches_query(job, v.parse_query(word)), word
     assert v.job_matches_query(_deployment("CANCELLED"), v.parse_query("dropped"))
+    for query in ("status:ready", "status:running"):  # the word its row shows, and the job status
+        assert v.job_matches_query(job, v.parse_query(query)), query
+    assert not v.job_matches_query(_training(), v.parse_query("status:ready"))
     assert not v.job_matches_query(_training(), v.parse_query("ready"))
 
 
@@ -95,6 +98,7 @@ def test_a_refresh_without_sub_jobs_keeps_a_deployment_one():
     fresh = {"job_id": "8", "status": "UNKNOWN"}
     assert v.is_deployment(v.refresh_job(_deployment(), fresh))
     assert v.refresh_job(_deployment(), fresh)["status"] == "UNKNOWN"
+    assert "status" not in v.refresh_job(_deployment(), fresh)["sub_jobs"][0]  # no longer known
     assert "sub_jobs" not in v.refresh_job(_training(), fresh)  # a job's sub-jobs go, as before
 
 
@@ -108,11 +112,24 @@ def test_a_list_refresh_without_sub_jobs_keeps_a_deployment_in_its_view():
             screen = app.screen
             [merged] = screen._merged([{"job_id": "8", "status": "UNKNOWN"}])
             assert v.is_deployment(merged) and merged["status"] == "UNKNOWN"
+            assert "status" not in merged["sub_jobs"][0]
             [merged] = screen._merged([{"job_id": "8", "status": "UNKNOWN", "sub_jobs": []}])
             assert v.is_deployment(merged)
             await _settle(app, pilot)
 
     asyncio.run(run())
+
+
+def test_a_deployment_s_count_and_sub_job_say_its_status_as_its_row_does():
+    from cortex_training.tui.job_list import _status_chips
+    from cortex_training.tui.logs import LogScreen
+
+    chips = str(_status_chips([_deployment(), _deployment("PENDING")], 0))
+    assert "1 ready" in chips and "running" not in chips, chips
+    assert "1 running" in str(_status_chips([_training()], 0))
+    screen = LogScreen(MagicMock(), "8", job=_deployment())
+    assert str(screen._source_text(DEPLOY)).endswith("ready")
+    assert str(LogScreen(MagicMock(), "7", job=_training())._source_text("7:training:0")).endswith("running")
 
 
 def test_preview_facts_of_a_deployment():

@@ -1287,7 +1287,8 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         shown = sid == self._current_source
         return Content.assemble((f"{look.glyph} ", look.color),
                                 (self._source_label(sid), f"bold {theme.TEXT}" if shown else ""),
-                                ("\n  " + word, theme.TEXT if shown else theme.FAINT))
+                                ("\n  " + views.status_word_for(self._job, word),
+                                 theme.TEXT if shown else theme.FAINT))
 
     def _paint_sources(self) -> None:
         """UI thread. Draw the sub-job list again: which one the pane shows, and each one's status."""

@@ -956,13 +956,14 @@ call and shows no pages.
 
 The list has two views of the same jobs: **Jobs** (training and sampling, where
 `ct tui` opens) and **Deployments** (the jobs `ct` lists as model deployments; see
-[Model Deployments](#model-deployments)). `d` switches between them; the title starts with
-`deployments` while that view is on screen, and the info line says how many jobs the other one holds (`106
-deployments · d shows them`). Search covers the view on screen; when it matches nothing
-there but something in the other view, it says so (`d shows the 3 matching deployments.`).
-A deployment's status
-reads as `ct` shows it (`READY`, `DROPPED`, ...); the status filter and `status:` search
-still use the job statuses (`running`, `cancelled`, ...).
+[Model Deployments](#model-deployments)). `d` switches between them; the title
+starts with `deployments` while that view is on screen, and the info line says
+how many jobs the other one holds (`106 deployments · d shows them`). Search
+covers the view on screen; when it matches nothing there but something in the
+other view, it says so (`d shows the 3 matching deployments.`). A deployment's
+status reads as `ct` shows it (`READY`, `DROPPED`, ...); `status:` search takes
+either word (`status:ready` or `status:running`), and the status filter uses the
+job statuses (`running`, `cancelled`, ...).
 
 Press `a`, or click `a All schemas` in the footer, to list the jobs in every
 database and schema the role can see instead, from the same list unscoped;

@@ -153,12 +153,17 @@ def _status_chips(live: list, history: int, *, live_so_far: bool = False, unknow
     (``history_so_far``)."""
     so_far = Content.styled(" so far", theme.FAINT)
     counts = Counter(_CHIP_OF.get(key, key) for key in (theme.status_key(job.get("status")) for job in live))
+    words = {}  # a deployment's count says its status as its row does (ready, not running)
+    for job in live:
+        if views.is_deployment(job):
+            key = theme.status_key(job.get("status"))
+            words[_CHIP_OF.get(key, key)] = views.status_word_for(job, job.get("status"))
     chips = []
     for key in [*_CHIP_ORDER, *sorted(set(counts) - set(_CHIP_ORDER))]:
         if counts.get(key):
             look = theme.status_look(key)
             chips.append(Content.assemble((f"{look.glyph} ", look.color), (f"{counts[key]:,} ", f"bold {theme.TEXT}"),
-                                          (key, theme.MUTED),
+                                          (words.get(key, key), theme.MUTED),
                                           so_far if key == "unknown" and unknown_so_far and not live_so_far else ""))
     chips = chips or [Content.styled("no live jobs", theme.MUTED)]
     ended = Content.assemble("  ", ("│", theme.FAINT), "  ", (f"{history:,} ", f"bold {theme.TEXT}"),
@@ -1120,8 +1125,7 @@ class JobListScreen(FollowsPointer, Screen):
             if old is not None:
                 if not job.get("created_at") and old.get("created_at"):
                     job = {**job, "created_at": old["created_at"]}
-                if not job.get("sub_jobs") and views.is_deployment(old):
-                    job = {**job, "sub_jobs": old["sub_jobs"]}  # as views.refresh_job keeps them
+                job = views.keep_deployment(old, job)
                 if job == old:
                     job = old
             merged.append(job)
