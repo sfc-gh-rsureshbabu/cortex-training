@@ -1246,8 +1246,8 @@ Live previews refresh every 60 seconds, on return from details, or on `r`; a
 dim line at the end of the job card reports reads, slow reads and refresh
 errors while keeping the last copy. `Enter` or a click opens the highlighted
 entire-job or sub-job scope on Logs (`⏎ opens its Logs` on the card's border).
-`l`, `g`, `m` and `c` open Logs, Resources, Training metrics and
-Checkpoints directly.
+For a training or sampling job, `l`, `g`, `m` and `c` open Logs, Resources,
+Training metrics and Checkpoints directly.
 A deployment's preview adds its class, replicas, idle timeout (`off` when it is
 never reclaimed), the deployment ID to call it by (`Call as`, the same ID `ct`
 shows) and the base URL of deployments in the job's schema. Its keys are `v` Serving, `l` Logs and `g` Resources.
@@ -1262,9 +1262,10 @@ location when it is not the configured one, then the service's `reason` and
 line does not fit on one row, the models are cut with `…`, then the id is left
 out (the header names it too). Switch tabs with `l` (Logs), `g`
 (Resources), `m` (Training metrics) and `c` (Checkpoints), or `t` for the
-next tab, round to Logs after the last.
-A deployment's tabs are Serving (`v`), Logs and Resources; a job opened by id
-shows the training tabs until its record says it is a deployment.
+next tab, round to the first after the last.
+A deployment's tabs are Serving (`v`), Logs and Resources, with no `m` or `c`,
+so `t` goes round to Serving; a job opened by id shows the training tabs until
+its record says it is a deployment.
 
 - **Logs** is the live and historical log view described below. The pane shows
   one sub-job at a time, the one selected in the list beside it, so its lines
@@ -1283,8 +1284,10 @@ shows the training tabs until its record says it is a deployment.
   `16 req · p50 50ms · ttft p99 215ms · 2 replicas`, and `· N replica errors` when any.
 - **Resources** shows telemetry (`download_metrics`) for one sub-job at a
   time. `Space` (or a click on its name) shows the next one; `<` and `>` go
-  back and forth. Its two-line pinned header names the sub-job, position,
-  window, sample age and scrape interval while the stats and charts scroll.
+  back and forth. Its pinned header names the sub-job, position,
+  window, sample age and scrape interval while the stats and charts scroll: two
+  lines, and for a deployment a third, that its GPU memory is reserved up front
+  for serving.
   - The focused left panel switches between `GPU Resources` and `System
     Resources`, then `ALL` (the mean) and each GPU or node. `↑`, `↓` or a click
     selects an entry. Each unit shows its latest utilization after a four-cell
@@ -1664,7 +1667,8 @@ polls per source, biasing toward server reliability over freshness.
 
 Each opened job is cached under `~/.cache/cortex-training/jobs/` (or
 `$XDG_CACHE_HOME/cortex-training/jobs/`, or `$CORTEX_TRAINING_TUI_CACHE_DIR/jobs/`):
-its log tail, finished console, and telemetry. To bound disk usage across long
+its log tail, finished console, and telemetry, and for a deployment the Serving
+tab's own copy of its console (`serving/`). To bound disk usage across long
 or repeated sessions, the cache holds at most 5 GiB. That limit covers the jobs
 and the local training metrics the client writes (`local-training/`) together,
 so the two are one budget rather than two that add up. Those rows count up to
@@ -1692,7 +1696,7 @@ and uncounted. A job cached by a TUI from before saved consoles moved to
 Jobs open in a running TUI or actively downloading (a `download-metrics` into a
 job's cache directory included) are never evicted. Opening a job creates its
 directory, with a `.last-used` timestamp and the lock files the TUI and its
-downloads take (`.lease`, `.cursors.lock`, `.console.lock`, `.metrics.lock`;
+downloads take (`.lease`, `.cursors.lock`, `.console.lock`, `.metrics.lock`, `.serving.lock`;
 `.cleanup.lock` and `.errors.lock` sit in the cache directory itself). An open
 job screen holds a shared lock on `.lease` (kept across `Ctrl+Z`, released by
 the OS on exit) and refreshes a `.leases/` marker every 5 minutes (valid for 30
