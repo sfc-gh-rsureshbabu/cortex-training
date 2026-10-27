@@ -175,6 +175,27 @@ def test_an_empty_view_points_to_the_other_one():
     asyncio.run(run())
 
 
+def test_an_empty_view_of_a_list_cut_short_says_more_may_exist():
+    from cortex_training.tui.account import OLDER, PAGE_LIMIT, SCHEMA, ListScope
+
+    c = _client([_deployment()])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, poll_interval=0.01)
+        async with app.run_test(size=(160, 45)) as pilot:
+            assert await _wait(pilot, lambda: isinstance(app.screen, JobListScreen) and app.screen._nomatch)
+            screen = app.screen
+            for scope, said in ((ListScope(SCHEMA, loading=OLDER, walked=1), "still loading"),
+                                (ListScope(SCHEMA, stopped=PAGE_LIMIT, pages=2), "more may exist")):
+                screen._scope = scope
+                screen._render_jobs()
+                assert said in screen._nomatch and "last 6 months" not in screen._nomatch, screen._nomatch
+                assert screen._nomatch.endswith("\n  d shows the 1 deployment."), screen._nomatch
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
 def test_a_search_covers_only_the_view_on_screen():
     c = _client([_training(), _deployment()])
 

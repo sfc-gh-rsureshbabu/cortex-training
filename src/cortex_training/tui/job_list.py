@@ -1522,13 +1522,15 @@ class JobListScreen(FollowsPointer, Screen):
                              location=self._schema_label() if one else "", widen=widen, narrow=narrow,
                              everything=everything, elsewhere=elsewhere)
                 message = views.no_match_message(self._filter, query, len(recent), **found)
-            elif others:
-                what = "deployments" if self._deployments else "training or sampling jobs"
-                other = "job" if self._deployments else "deployment"
-                message = (f"No {what} created in the last 6 months.\n"
-                           f"  d shows the {others:,} {other}{'' if others == 1 else 's'}.")
-            elif self._scope is not None and self._scope.truncated:
-                message = empty_text(self._scope)
+            elif others or (self._scope is not None and self._scope.truncated):
+                if self._scope is not None and self._scope.truncated:
+                    message = empty_text(self._scope)
+                else:
+                    what = "deployments" if self._deployments else "training or sampling jobs"
+                    message = f"No {what} created in the last 6 months."
+                if others:
+                    other = "job" if self._deployments else "deployment"
+                    message += f"\n  d shows the {others:,} {other}{'' if others == 1 else 's'}."
             elif self._scope is not None and self._scope.kind == ACCOUNT:
                 where = f"in {self._scope.narrowed}" if self._scope.narrowed else "in any database and schema"
                 message = f"No jobs created in the last 6 months that this role can see, {where}."
