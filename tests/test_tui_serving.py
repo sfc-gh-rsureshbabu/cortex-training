@@ -228,6 +228,7 @@ def _console(lines):
 
 def _client(job, lines=()):
     c = MagicMock()
+    c.model_deployment_base_url = "https://HOST/api/v2/databases/DB/schemas/PUBLIC/cortex-training/inference/v1"
     c.list_jobs_page.side_effect = AccountJobListUnavailable("not deployed", reason="not_deployed")
     c.list_jobs.return_value = []
     c.get_job.return_value = job

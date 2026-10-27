@@ -111,11 +111,16 @@ def test_preview_facts_of_a_deployment():
 
 
 def test_base_url_comes_from_the_client():
-    class Client:
-        model_deployment_base_url = "https://HOST/api/v2/databases/DB/schemas/PUBLIC/cortex-training/inference/v1"
+    from cortex_training.client import CortexTrainingClient
+    from cortex_training.tui.untrusted import printable_client
 
-    assert v.base_url(Client()) == Client.model_deployment_base_url
-    assert v.base_url(object()) == ""
+    real = CortexTrainingClient(base_url="https://HOST", database="DB", schema="PUBLIC")
+    held = printable_client(real)  # as the TUI holds it
+    assert v.base_url(held) == real.model_deployment_base_url
+    other = held.for_job({"database_name": "DB", "schema_name": "OTHER"})
+    assert v.base_url(other) == "https://HOST/api/v2/databases/DB/schemas/OTHER/cortex-training/inference/v1"
+    with pytest.raises(AttributeError):  # renamed in the client: fails here, not as a Base URL row gone quiet
+        v.base_url(object())
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +133,7 @@ def _isolated_cache(tmp_path, monkeypatch):
 
 def _client(jobs, job=None):
     c = MagicMock()
+    c.model_deployment_base_url = "https://HOST/api/v2/databases/DB/schemas/PUBLIC/cortex-training/inference/v1"
     c.list_jobs_page.side_effect = AccountJobListUnavailable("not deployed", reason="not_deployed")
     c.list_jobs.return_value = jobs
     c.get_job.return_value = job if job is not None else jobs[0]

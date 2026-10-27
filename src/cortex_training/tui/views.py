@@ -358,9 +358,8 @@ def status_word_for(job: Any, status: Any) -> str:
 
 
 def base_url(client: Any) -> str:
-    """The OpenAI-compatible base URL of deployments in ``client``'s schema; ``""`` if it has none."""
-    url = getattr(client, "model_deployment_base_url", None)
-    return url if isinstance(url, str) else ""
+    """The OpenAI-compatible base URL of deployments in ``client``'s schema."""
+    return client.model_deployment_base_url
 
 
 def _call_as(job: dict) -> str:

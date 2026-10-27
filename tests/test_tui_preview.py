@@ -374,6 +374,7 @@ def test_a_refresh_rebuilds_the_footer_only_when_its_keys_change():
     deployment = _job(sub_jobs=[{"sub_job_id": "JOB_ID:sampling:0", "job_type": "sampling", "status": "RUNNING",
                                  "inference_config": {"deployment_class": "EVALUATION"}}])
     client = MagicMock()
+    client.model_deployment_base_url = "https://HOST/api/v2/databases/DB/schemas/SCHEMA/cortex-training/inference/v1"
     client.list_jobs.return_value = [job]
     client.get_job.return_value = job
 

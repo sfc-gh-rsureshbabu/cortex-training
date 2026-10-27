@@ -413,6 +413,10 @@ class FakeClient:
         end = start + len(page)
         return {"jobs": page, "next_page_token": str(end) if end < len(rows) else None}
 
+    @property
+    def model_deployment_base_url(self) -> str:
+        return f"https://HOST/api/v2/databases/{self.database}/schemas/{self.schema}/cortex-training/inference/v1"
+
     def for_job(self, job: dict) -> "FakeClient":
         """A view of this client bound to ``job``'s database and schema, as ``CortexTrainingClient.for_job``."""
         view = copy.copy(self)  # shares the jobs, stores and caches
