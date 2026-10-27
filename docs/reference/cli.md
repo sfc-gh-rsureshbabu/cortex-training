@@ -1378,8 +1378,10 @@ its record says it is a deployment.
   `starting`, `starting (no metrics yet)`, `serving`, `status unknown`, `dropping`
   or `ended` (`running` while a first read finds no drain yet), the replica
   count, how long ago the last drain was (its time once the deployment is
-  dropping or ended), how long the deployment took to start, and the
-  download's warnings (skipped chunks, say). The table has one row per drain,
+  dropping or ended), how long the deployment took to start, the download's
+  chunk count while it runs (the first open of a long-running deployment
+  fetches its whole console), and the download's warnings (skipped chunks,
+  say). The table has one row per drain,
   newest first, for the newest 240 (about two hours; a note under it says when
   it leaves older ones out): its time (`HH:MM:SS` in local time, with the date
   first unless every row is today's), requests per second, requests, latency

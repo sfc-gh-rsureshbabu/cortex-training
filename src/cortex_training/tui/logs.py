@@ -478,24 +478,35 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
                 tabs.hide_tab(tab)
         self.refresh_bindings()
 
-    def _download_serving_console(self, *, sub_job_id, cancelled) -> list | None:
+    def _download_serving_console(self, *, sub_job_id, cancelled, progress=None) -> list | None:
         """Worker thread. The Serving tab's download: the deployment's console, resumed, in a directory
         and DownloadLock of its own. The Logs tab's saved console is kept or dropped by rules of its own
         (_keep_console), so the two don't share files. Returns the download's warnings, or None when it
-        didn't run."""
+        didn't run. ``progress(done, total)`` gets the chunk count a few times a second."""
         lock = DownloadLock(self._serving_root)
         if not lock.acquire(lambda: self._screen_open and not cancelled()):
             return None
         before = telemetry_bytes(self._serving_root)
 
-        def stop_once_closed(*_) -> None:
+        last = [0.0]
+
+        def on_chunk(_sub_job_id: str, done: int, total: int, _bytes: int = 0) -> None:
             if not self._screen_open or cancelled():
                 raise DownloadCancelled("the Serving tab closed")
+            now = time.monotonic()
+            if progress is None or last[0] < 0 or (done < total and now - last[0] < self._PROGRESS_SECONDS):
+                return
+            last[0] = now
+            try:
+                progress(done, total)
+            except Exception:  # noqa: BLE001 - a bug in drawing the count must not fail the download
+                last[0] = -1.0  # no more counts
+                log_traceback("showing the Serving download's progress failed (a bug in the TUI)")
 
         try:
             results = self._client.download_stdout_logs(
                 self._job_id, self._serving_root, resume=True, sub_job_ids=[sub_job_id],
-                on_chunk=stop_once_closed, **_quiet_download(self._client.download_stdout_logs))
+                on_chunk=on_chunk, **_quiet_download(self._client.download_stdout_logs))
         except DownloadCancelled:  # the next open resumes from the chunks saved so far
             results = None
         finally:

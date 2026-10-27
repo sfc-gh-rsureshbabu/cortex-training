@@ -482,6 +482,64 @@ def test_a_cancelled_serving_download_stops_at_its_next_chunk():
     asyncio.run(run())
 
 
+def test_the_serving_header_counts_the_download_s_chunks_while_it_runs():
+    import threading
+
+    c = _client(_deployment(), [_drain(0.0, 3)])
+    saved, go = c.download_stdout_logs.side_effect, threading.Event()
+
+    def download(job_id, output_dir, *, on_chunk, **kwargs):
+        on_chunk(DEPLOY, 1, 40, 0)
+        go.wait(5)
+        on_chunk(DEPLOY, 40, 40, 0)
+        return saved(job_id, output_dir, **kwargs)
+
+    c.download_stdout_logs.side_effect = download
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: "downloading chunk 1 of 40" in _text(screen, "#serving-status"))
+            go.set()
+            assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("serving"))
+            assert "chunk" not in _text(screen, "#serving-status")
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_broken_progress_count_does_not_fail_the_serving_download():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+    saved = c.download_stdout_logs.side_effect
+
+    def download(job_id, output_dir, *, on_chunk, **kwargs):
+        for done in (1, 2):
+            on_chunk(DEPLOY, done, 2, 0)
+        return saved(job_id, output_dir, **kwargs)
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            c.download_stdout_logs.side_effect = download
+            calls = []
+
+            def progress(done, total):
+                calls.append((done, total))
+                raise ValueError("a bug in drawing it")
+
+            assert screen._download_serving_console(sub_job_id=DEPLOY, cancelled=lambda: False,
+                                                    progress=progress) == []
+            assert calls == [(1, 2)]  # counted once, then no more
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
 def test_a_dropping_deployment_is_checked_until_it_is_dropped():
     c = _client(_deployment(), [_drain(0.0, 3)])
 

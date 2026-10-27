@@ -66,6 +66,7 @@ class ServingPane(_Pane):
         self._warnings: list = []  # the last download's, shown in the header
         self._reload_pending = False  # asked for while a load ran: one more once it finishes
         self._read = False  # a load has finished: no drain since says there is none yet
+        self._chunks: tuple[int, int] | None = None  # the running download's (done, total)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="serving-status")
@@ -103,7 +104,8 @@ class ServingPane(_Pane):
             if self._reader is None:
                 self._reader = serving.ConsoleReader(self._root / sid / "stdout.log")
             self._post(self._accept, self._reader.read())  # what is cached, while the download runs
-            warnings = self._download(sub_job_id=sid, cancelled=lambda: worker.is_cancelled)
+            warnings = self._download(sub_job_id=sid, cancelled=lambda: worker.is_cancelled,
+                                      progress=lambda done, total: self._post(self._show_chunks, done, total))
             if warnings is None or worker.is_cancelled:
                 return
             self._post(self._accept, self._reader.read(), warnings)
@@ -124,8 +126,13 @@ class ServingPane(_Pane):
             self._warnings = warnings
         self.redraw()
 
+    def _show_chunks(self, done: int, total: int) -> None:
+        self._chunks = (done, total)
+        self.query_one("#serving-status", Static).update(self._status_text())
+
     def _finish(self, error: str | None) -> None:
         self._loading = False
+        self._chunks = None
         self._read = True
         self._error = error  # rows already shown stay
         if self._reload_pending:
@@ -136,6 +143,7 @@ class ServingPane(_Pane):
 
     def _cancelled(self) -> None:
         self._loading = False
+        self._chunks = None
         self._reload_pending = False
 
     # ── drawing ──
@@ -165,7 +173,9 @@ class ServingPane(_Pane):
                 text.append(f"  ·  last drain {when}", style=theme.MUTED)
         if data.startup_s is not None:
             text.append(f"  ·  started in {views.fmt_duration(data.startup_s)}", style=theme.MUTED)
-        if self._loading:
+        if self._loading and self._chunks and self._chunks[0] < self._chunks[1]:
+            text.append(f"  ·  downloading chunk {self._chunks[0]:,} of {self._chunks[1]:,}", style=theme.MUTED)
+        elif self._loading:
             text.append("  ·  loading…", style=theme.MUTED)
         if self._warnings:
             text.append("\n" + " ".join(safe_text(_warning_text(self._warnings)).split()), style=theme.WARN)
