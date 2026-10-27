@@ -5,9 +5,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from pathlib import Path
+from unittest.mock import MagicMock
 
-from cortex_training.tui import serving
+import pytest
+
+pytest.importorskip("textual")
+
+from textual.widgets import Static  # noqa: E402
+from textual.widgets import TabbedContent  # noqa: E402
+
+from cortex_training import AccountJobListUnavailable  # noqa: E402
+from cortex_training.client import NoChunksError  # noqa: E402
+from cortex_training.tui import serving  # noqa: E402
+from cortex_training.tui.app import CortexTrainingLogTUI  # noqa: E402
+from cortex_training.tui.logs import LogScreen  # noqa: E402
 
 
 def _drain(at, done, **extra) -> str:
@@ -79,3 +93,166 @@ def test_serving_state():
     assert serving.serving_state({"status": "RUNNING"}, none) == "starting (no metrics yet)"
     assert serving.serving_state({"status": "RUNNING"}, some) == "serving"
     assert serving.serving_state({"status": "CANCELLED"}, some) == "ended"
+
+
+DEPLOY = "8:sampling:0"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("CORTEX_TRAINING_TUI_CACHE_DIR", str(tmp_path / "cache"))
+    import cortex_training.tui.widgets as widgets_module
+
+    monkeypatch.setattr(widgets_module, "_ERROR_LOG", str(tmp_path / "errors.log"))
+
+
+def _deployment(status="RUNNING"):
+    return {"job_id": "8", "status": status,
+            "sub_jobs": [{"sub_job_id": DEPLOY, "job_type": "sampling", "status": status,
+                          "inference_config": {"deployment_class": "EVALUATION", "num_replicas": 1.0}}]}
+
+
+def _console(lines):
+    """A ``download_stdout_logs`` that saves ``lines`` as the sub-job's console."""
+
+    def download(job_id, output_dir, *, resume=False, sub_job_ids=None, **_kwargs):
+        sid = list(sub_job_ids)[0]
+        path = Path(output_dir) / sid / "stdout.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(line + "\n" for line in lines))
+        return [{"sub_job_id": sid, "saved_path": str(path)}]
+
+    return download
+
+
+def _client(job, lines=()):
+    c = MagicMock()
+    c.list_jobs_page.side_effect = AccountJobListUnavailable("not deployed", reason="not_deployed")
+    c.list_jobs.return_value = []
+    c.get_job.return_value = job
+    c.tail_logs.return_value = {"entries": [], "next_cursor": "", "eof": True}
+    c.download_stdout_logs.side_effect = _console(list(lines))
+    return c
+
+
+async def _wait(pilot, predicate, tries=300):
+    for _ in range(tries):
+        await pilot.pause(0.01)
+        if predicate():
+            return True
+    return False
+
+
+async def _settle(app, pilot):
+    app.workers.cancel_all()
+    for _ in range(5):
+        await pilot.pause()
+
+
+def _text(screen, selector) -> str:
+    """What the widget shows, as text (a Rich Table's str() is its repr)."""
+    widget = screen.query_one(selector, Static)
+    return "\n".join(strip.text for strip in widget.render_lines(widget.content_region.reset_offset))
+
+
+def _visible_tabs(screen) -> list:
+    tabs = screen.query_one("#job-tabs", TabbedContent)
+    return [pane.id for pane in tabs.query("TabPane") if not tabs.get_tab(pane.id).has_class("-hidden")]
+
+
+async def _open(app, pilot) -> LogScreen:
+    assert await _wait(pilot, lambda: isinstance(app.screen, LogScreen) and app.screen._sources_ready)
+    return app.screen
+
+
+def test_open_by_id_switches_to_deployment_tabs():
+    c = _client(_deployment(), [_drain(0.0, 0), _drain(30.0, 15)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: _visible_tabs(screen) == ["serving", "logs", "resource"])
+            assert await _wait(pilot, lambda: "● READY" in str(screen.query_one("#summary", Static).render()))
+            assert not c.download_stdout_logs.called  # lazy: only once the tab is shown
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: "serving" in _text(screen, "#serving-status"))
+            assert c.download_stdout_logs.call_args.kwargs["sub_job_ids"] == [DEPLOY]
+            assert c.download_stdout_logs.call_args.kwargs["resume"] is True
+            table = _text(screen, "#serving-table")
+            rows = [line for line in table.splitlines() if ":" in line]  # the drain rows start with a time
+            assert "0.50" in rows[0] and "15" in rows[0]  # newest first: 15 requests over 30 s
+            assert "—" in rows[1]  # the first drain has no rate
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_a_training_job_keeps_its_tabs():
+    job = {"job_id": "7", "status": "RUNNING", "sub_jobs": [{"sub_job_id": "7:training:0", "job_type": "training"}]}
+    c = _client(job)
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "7", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: _visible_tabs(screen) == ["logs", "resource", "training", "checkpoints"])
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_hidden_tab_keys_do_nothing():
+    c = _client(_deployment())
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            for key in ("m", "c"):
+                await pilot.press(key)
+                await pilot.pause(0.05)
+                assert screen.query_one("#job-tabs", TabbedContent).active == "logs"
+            await pilot.press("t")
+            assert await _wait(pilot, lambda: screen._active_tab == "resource")
+            await pilot.press("t")
+            assert await _wait(pilot, lambda: screen._active_tab == "serving")  # round to the first visible tab
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_no_console_yet_is_not_an_error_and_a_failure_says_so():
+    c = _client(_deployment())
+    c.download_stdout_logs.side_effect = NoChunksError("no chunks yet", sub_job_ids=[DEPLOY], available=[])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: "starting (no metrics yet)" in _text(screen, "#serving-status"))
+            c.download_stdout_logs.side_effect = RuntimeError("boom")
+            await pilot.press("r")
+            assert await _wait(pilot, lambda: "boom" in _text(screen, "#serving-status"))
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
+def test_an_ended_deployment_reads_ended_with_its_rows():
+    c = _client(_deployment("CANCELLED"), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            assert await _wait(pilot, lambda: "ended" in _text(screen, "#serving-status"))
+            assert "3" in _text(screen, "#serving-table")
+            await _settle(app, pilot)
+
+    asyncio.run(run())

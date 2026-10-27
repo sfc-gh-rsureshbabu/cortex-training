@@ -858,3 +858,10 @@ def test_a_cancelled_tail_persists_neither_an_empty_page_nor_a_missing_head(tmp_
     assert pages == []
     assert cache.get_cursor("window") is None and cache.load_entries("window") == []
     assert not cache.head_missing("window")
+
+
+def test_a_deployment_s_serving_folder_is_the_cache_s(tmp_path):
+    job = _job(tmp_path, "deploy", mib=3, age=5000)
+    (job / "serving" / "s").mkdir(parents=True)
+    (job / "serving" / "s" / "stdout.log").write_bytes(b"x" * MIB)
+    assert _names(cache_cleanup.enforce_cache_limit(tmp_path, limit=1 * MIB)) == ["deploy"]

@@ -915,3 +915,8 @@ def format_execution_record(record: Any) -> list:
         if text.strip():
             out.extend(f"    {line}" for line in text.splitlines())
     return out
+
+
+def short_seconds(seconds: float) -> str:
+    """A latency: ``420ms`` under a second, ``1.92s`` from one."""
+    return f"{seconds * 1000:.0f}ms" if seconds < 1 else f"{seconds:.2f}s"

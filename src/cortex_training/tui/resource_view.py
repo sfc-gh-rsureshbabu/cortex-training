@@ -157,12 +157,13 @@ class ResourceTab:
             self._render_resource()  # "cached · refreshing…" while it runs
         self._refresh_resource()
 
-    def _after_telemetry_download(self, before: int) -> None:
-        """Worker thread. A download that grew the job's telemetry from ``before`` bytes by
-        much asks the app to hold the cache to its limit soon (see hold_cache_soon). Never
-        fails the download: the cache is the TUI's own business."""
+    def _after_telemetry_download(self, before: int, root: Path | None = None) -> None:
+        """Worker thread. A download that grew the job's telemetry (under ``root``, the metrics
+        folder by default) from ``before`` bytes by much asks the app to hold the cache to its
+        limit soon (see hold_cache_soon). Never fails the download: the cache is the TUI's own
+        business."""
         try:
-            grown = telemetry_bytes(self._metrics_root) - before
+            grown = telemetry_bytes(root or self._metrics_root) - before
             if grown > 0:
                 self._post(self._ask_for_cache_pass, grown)
         except Exception:  # noqa: BLE001
