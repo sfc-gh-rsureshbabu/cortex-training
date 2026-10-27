@@ -182,7 +182,7 @@ def test_an_ended_deployment_s_last_drain_reads_as_a_time_not_an_age(monkeypatch
     pane = ServingPane(MagicMock(), "8", Path("."), job=lambda: job["value"], download=lambda **_: [])
     pane._data = serving.ServingData([serving.parse_line(_drain(drained_at, 2))])
     assert " ago" in str(pane._status_text())
-    job["value"] = _deployment("CANCELLED")  # the pane stops redrawing: an age would go stale
+    job["value"] = _deployment("CANCELLED")  # the pane soon stops reloading: an age would go stale
     assert "last drain at 2026-10-26 19:46" in str(pane._status_text())
     monkeypatch.setattr("cortex_training.tui.serving_view.local_time", lambda dt: "")  # out of the local range
     assert "last drain" not in str(pane._status_text())
@@ -441,6 +441,31 @@ def test_a_deployment_that_ends_on_the_serving_tab_reads_ended_with_its_last_dra
     asyncio.run(run())
 
 
+def test_a_cancelled_serving_download_stops_at_its_next_chunk():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=0.01)
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            chunks, closed = [], [False]
+
+            def download(job_id, output_dir, *, on_chunk, **_kwargs):
+                for done in (1, 2):
+                    chunks.append(done)
+                    closed[0] = True  # the screen closed while the first chunk came in
+                    on_chunk(DEPLOY, done, 2, 0)
+                return [{"sub_job_id": DEPLOY}]
+
+            c.download_stdout_logs.side_effect = download
+            assert screen._download_serving_console(sub_job_id=DEPLOY, cancelled=lambda: closed[0]) is None
+            assert chunks == [1]
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
 def test_a_dropping_deployment_is_checked_until_it_is_dropped():
     c = _client(_deployment(), [_drain(0.0, 3)])
 
@@ -454,6 +479,14 @@ def test_a_dropping_deployment_is_checked_until_it_is_dropped():
             c.get_job.return_value = _deployment("CANCELLING")
             screen._fetch_status()
             assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("dropping"))
+            screen._active_seen_at = None
+            screen._state_changed_at = "2020-01-01T00:00:00Z"  # a drop that hangs: still drained
+            pane = screen.query_one("#serving-tab")
+            reload = pane.reload
+            pane.reload = MagicMock()
+            screen._auto_refresh_data()
+            assert pane.reload.called
+            pane.reload = reload
             c.get_job.return_value = _deployment("CANCELLED")
             screen._refresh_status()  # the status check still runs: CANCELLING is not the end
             assert await _wait(pilot, lambda: _text(screen, "#serving-status").startswith("ended"))

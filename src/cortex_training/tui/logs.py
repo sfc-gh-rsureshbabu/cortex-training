@@ -487,13 +487,22 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if not lock.acquire(lambda: self._screen_open and not cancelled()):
             return None
         before = telemetry_bytes(self._serving_root)
+
+        def stop_once_closed(*_) -> None:
+            if not self._screen_open or cancelled():
+                raise DownloadCancelled("the Serving tab closed")
+
         try:
             results = self._client.download_stdout_logs(
                 self._job_id, self._serving_root, resume=True, sub_job_ids=[sub_job_id],
-                **_quiet_download(self._client.download_stdout_logs))
+                on_chunk=stop_once_closed, **_quiet_download(self._client.download_stdout_logs))
+        except DownloadCancelled:  # the next open resumes from the chunks saved so far
+            results = None
         finally:
             lock.release()
         self._after_telemetry_download(before, self._serving_root)
+        if results is None:
+            return None
         warnings = _result_warnings(results, kind="stdout", job_id=self._job_id, output_dir=self._serving_root)
         return warnings.get(sub_job_id, [])
 
@@ -1937,10 +1946,11 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
         if self.app.screen is not self:
             return
         if not self._live():
-            # A deployment's last drains are uploaded for a while after it ends.
+            # A deployment's drains go on while it is dropped, and are uploaded for a while after it ends.
             pane = self._detail_pane()
             if (isinstance(pane, ServingPane) and pane.shown
-                    and self._console_may_be_incomplete(self._active_seen_at, self._state_changed_at)):
+                    and (self._dropping()
+                         or self._console_may_be_incomplete(self._active_seen_at, self._state_changed_at))):
                 pane.reload()
             return
         if self._resource_active() and self._resource_waiting() is None:
@@ -2697,11 +2707,10 @@ class LogScreen(ResourceTab, CheckpointTab, FollowsPointer, Screen):
                         "job's status changes (r tries now)")
             else:
                 note = (f"waiting: {name} hasn't started yet (the service isn't routing to it); "
-                        "the tail starts again once it is running")
+                        "the tail starts again once it is up")
             self._set_waiting("stopped", note)
         else:
-            self._set_waiting("stopped",
-                              f"waiting: {name} is {self._said(why)}; the tail starts again once it is running")
+            self._set_waiting("stopped", f"waiting: {name} is {self._said(why)}; the tail starts again once it is up")
 
     def _run_download(self, sub_job_id: str) -> None:
         """Worker thread. The saved-console download this view claimed (see _claim_stdout):

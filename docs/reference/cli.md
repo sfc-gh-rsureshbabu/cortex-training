@@ -1250,8 +1250,9 @@ entire-job or sub-job scope on Logs (`⏎ opens its Logs` on the card's border).
 For a training or sampling job, `l`, `g`, `m` and `c` open Logs, Resources,
 Training metrics and Checkpoints directly.
 A deployment's preview adds its class, replicas, idle timeout (`off` when it is
-never reclaimed, `server default` when the job sets none), the deployment ID to call it by (`Call as`, the same ID `ct`
-shows) and the base URL of deployments in the job's schema. Its keys are `v`
+never reclaimed, `server default` when the job sets none), the deployment ID to
+call it by (`Call as`, the same ID `ct` shows) and the base URL of deployments
+in the job's schema. Its keys are `v`
 Serving, `l` Logs and `g` Resources.
 
 #### Job details
