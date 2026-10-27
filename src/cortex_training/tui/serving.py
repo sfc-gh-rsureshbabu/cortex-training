@@ -98,7 +98,9 @@ def parse_line(line: str) -> Optional[Drain]:
 
 def _startup(line: str) -> Optional[float]:
     row = _row(line, _STARTUP_MARK, "job_metrics")
-    return _num(row.get("duration_s")) if row is not None and row.get("op") == "create-job" else None
+    if row is None or row.get("op") != "create-job" or row.get("error"):  # a failed try started nothing
+        return None
+    return _num(row.get("duration_s"))
 
 
 class ConsoleReader:

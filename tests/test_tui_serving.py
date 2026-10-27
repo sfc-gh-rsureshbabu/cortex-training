@@ -47,6 +47,39 @@ def test_parse_line_reads_a_drain_and_skips_everything_else():
     assert serving.parse_line(_drain(100.0, 1, latency_s_p99="NaN")).latency_p99 is None
 
 
+REAL_CONSOLE = Path(__file__).parent / "fixtures" / "deployment_console.log"  # trimmed from a real deployment
+
+
+def test_the_real_console_lines_parse(tmp_path):
+    path = tmp_path / "stdout.log"
+    path.write_bytes(REAL_CONSOLE.read_bytes())
+    data = serving.ConsoleReader(path).read()
+    assert data.startup_s == 135.96204860392027
+    assert [(d.drained_at, d.completed) for d in data.drains] == [
+        (1793043984.3675478, 0), (1793044854.6796148, 1), (1793044944.7124422, 0)]
+    idle, busy = data.drains[0], data.drains[1]
+    assert idle.latency_p50 is None and idle.kv_max is None and idle.replicas == 1 and idle.running == 0.0
+    assert busy.latency_p50 == 0.6584606170654297 and busy.ttft_p99 == 0.0229952335357666
+    assert busy.queue_p99 == 0.004767656326293945
+    assert busy.kv_max == 2.6320984404804015e-05 and busy.replicas == 1 and busy.replica_errors == 0
+
+
+def _failed_create(line: str) -> str:
+    """The real create-job row, as the zone head writes one that raised (``Type: message``)."""
+    return json.dumps({**json.loads(line), "duration_s": 2.0, "error": "RuntimeError: CUDA out of memory"})
+
+
+def test_a_failed_create_job_is_no_startup_time(tmp_path):
+    created = next(ln for ln in REAL_CONSOLE.read_text().splitlines() if '"job_metrics"' in ln)
+    path = tmp_path / "stdout.log"
+    path.write_text(_failed_create(created) + "\n")
+    reader = serving.ConsoleReader(path)
+    assert reader.read().startup_s is None
+    with path.open("a") as f:
+        f.write(created + "\n")  # the retry that started it
+    assert reader.read().startup_s == 135.96204860392027
+
+
 def test_rate_divides_by_the_actual_gap():
     a, b, c = (serving.parse_line(_drain(t, n)) for t, n in ((0.0, 0), (30.0, 15), (90.0, 30)))
     assert serving.rate(None, a) is None
