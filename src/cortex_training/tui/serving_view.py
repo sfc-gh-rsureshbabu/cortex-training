@@ -78,7 +78,7 @@ class ServingPane(_Pane):
         return self.query_one("#serving-pane")
 
     # ── reading ──
-    def reload(self) -> None:
+    def reload(self, *, live: bool = False) -> None:
         if self._loading:
             # A load already running may have downloaded before the change this one is for (the job ending, say).
             self._reload_pending = True

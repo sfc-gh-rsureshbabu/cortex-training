@@ -660,6 +660,29 @@ def test_a_dropping_deployment_is_checked_until_it_is_dropped():
     asyncio.run(run())
 
 
+def test_the_live_tick_reads_serving_again():
+    c = _client(_deployment(), [_drain(0.0, 3)])
+
+    def serving_reads(pane):
+        return sum(call.kwargs.get("sub_job_ids") == [DEPLOY] and call.args[1] == pane._root
+                   for call in c.download_stdout_logs.call_args_list)
+
+    async def run():
+        app = CortexTrainingLogTUI(c, "8", poll_interval=60)  # no poll: only the tick below reads again
+        async with app.run_test(size=(140, 40)) as pilot:
+            screen = await _open(app, pilot)
+            assert await _wait(pilot, lambda: "serving" in _visible_tabs(screen))
+            await pilot.press("v")
+            pane = screen.query_one("#serving-tab")
+            assert await _wait(pilot, lambda: serving_reads(pane) == 1 and not pane._loading)
+            assert screen._live()
+            screen._auto_refresh_data()  # what the 30-second timer calls
+            assert await _wait(pilot, lambda: serving_reads(pane) == 2)
+            await _settle(app, pilot)
+
+    asyncio.run(run())
+
+
 def test_serving_reads_again_while_the_last_drains_may_still_upload():
     c = _client(_deployment(), [_drain(0.0, 3)])
 
