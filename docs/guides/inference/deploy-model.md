@@ -79,9 +79,9 @@ base_url = ready["base_url"]
 
 ## 3. Stream a chat completion
 
-Authenticate with a Snowflake programmatic access token (PAT), even if you
-created the client from a connection profile, and pass the deployment ID as
-`model`. The examples below read it from `PAT`:
+Authenticate with a Snowflake programmatic access token (PAT), the documented
+method for calling a deployment, and pass the deployment ID as `model`. The
+examples below read it from `PAT`:
 
 ```python
 import os
