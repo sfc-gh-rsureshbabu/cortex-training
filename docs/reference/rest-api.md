@@ -316,6 +316,7 @@ Paths are relative to the prefix in [section 2.1](#21-base-url).
 |---|---|---|---|
 | `/` | `POST` | `create_job`, `create_job_from_body` | Create a job |
 | `/` | `GET` | `list_jobs` | List jobs, optionally filtered by status |
+| `/api/v2/cortex-training/models` | `GET` | `list_models` | Account-level active models; not under the schema prefix |
 | `/capacity` | `GET` | `get_capacity`, `get_capacity_breakdown` | Account reservation and GPU usage, optionally broken down |
 | `/{job_id}` | `GET` | `get_job`, `wait_for_job` | Job and sub-job status |
 | `/{job_id}:cancel` | `POST` | `cancel_job` | Cancel a job |
@@ -586,7 +587,22 @@ whole one, so that location's jobs are read whole rather than filtered out of
 the newest jobs the walk reads; see the job list in `docs/reference/cli.md`. A
 page token is only sent back with the filters it was made under, as above.
 
-### 5.4 Capacity - `GET /capacity`
+### 5.4 List models - `GET /api/v2/cortex-training/models`
+
+This account-scoped endpoint returns active models configured for new jobs.
+It is not under the database and schema prefix. The server resolves the
+account from the authenticated session:
+
+```json
+{"models": [{"name": "Qwen/Qwen3-8B"}]}
+```
+
+`CortexTrainingClient.list_models()` returns only the `models` list. The CLI
+`models` command restores the server-shaped envelope. This response is policy
+discovery, not a cache or capacity guarantee; a listed model can still wait for
+weight synchronization or enough GPUs for a particular job shape.
+
+### 5.5 Capacity - `GET /capacity`
 
 This account-scoped endpoint takes no account id from the caller. The server
 resolves the account from the authenticated session. Besides `hardware`
@@ -760,7 +776,7 @@ It fills missing counts with `0` and always lists the three known job types
 when there are groups. The CLI exposes it as
 [`capacity --breakdown`](cli.md#capacity-breakdown).
 
-### 5.5 Cancel job - `POST /{job_id}:cancel`
+### 5.6 Cancel job - `POST /{job_id}:cancel`
 
 No body. Pending, placing, and running jobs enter cancellation. Repeating a
 cancel while a job is cancelling or already cancelled is an idempotent success.
@@ -768,7 +784,7 @@ Terminated or failed jobs return a precondition/conflict-style error.
 
 `cancel_job()` returns `None`.
 
-### 5.6 Experiment run - `GET /{job_id}/experiment-run`
+### 5.7 Experiment run - `GET /{job_id}/experiment-run`
 
 ```json
 {
@@ -779,7 +795,7 @@ Terminated or failed jobs return a precondition/conflict-style error.
 
 `fetch_execution_logs()` uses these values to locate the run's stage.
 
-### 5.7 List checkpoints - `GET /{job_id}/checkpoints`
+### 5.8 List checkpoints - `GET /{job_id}/checkpoints`
 
 ```json
 {
@@ -809,7 +825,7 @@ output is selected with the global option:
 cortex-training --compact checkpoints JOB_ID
 ```
 
-### 5.8 Export checkpoint
+### 5.9 Export checkpoint
 
 ```text
 POST /{job_id}/checkpoints/{checkpoint_id}:export
@@ -833,7 +849,7 @@ No body.
 
 The URLs are short-lived.
 
-### 5.9 Delete checkpoint
+### 5.10 Delete checkpoint
 
 ```text
 DELETE /{job_id}/checkpoints/{checkpoint_id}
@@ -1712,7 +1728,15 @@ use stage 2 with `zero_optimization.offload_optimizer`. Examples include
 [below](#prime_rl-block-deprecated)), `router_replay`, `peft_config`,
 `model_options` (see [below](#model_options)), the memory-diagnostics settings
 in [section 8.5](#85-memory-diagnostics-settings), and these newer
-long-context/memory knobs:
+long-context/memory knobs.
+
+`model_provider` `"arctic"` is the name the shipped MoE configs and this
+document use, but the server accepts that provider only as `"prime_rl"` for
+now. The Python client and `cortex-training submit` send a training
+`model_provider` of `"arctic"` as `"prime_rl"`; a request sent without the
+client must use `"prime_rl"`.
+
+The long-context/memory knobs:
 
 - `sp_size`: Ulysses sequence-parallel degree, sharding each sample's sequence
   across `sp_size` ranks. `1` (default) disables it; the server requires
@@ -1759,6 +1783,10 @@ repository's RL example fills in `5368709120` (5 GiB) for training and
 planner that sizes a cap from the expert count, sequence length, MoE layer
 count, and top-k; see
 [Router-replay capacity planning](../../examples/rl/README.md#router-replay-capacity-planning).
+
+`extra_training["model_provider"] = "dflash2"` trains a DFlash2
+speculative-decoding draft against a frozen target. Its options and rules are in
+[section 8.6](#86-dflash2-draft-training-and-serving).
 
 For LoRA training, set `extra_training["peft_config"]` to a PEFT
 `LoraConfig`-compatible object. It is validated and rewritten client-side, so it
@@ -2178,6 +2206,10 @@ sampling = SubJobConfig.sampling_job(
 )
 ```
 
+To serve a draft trained with the `dflash2` provider, set
+`speculative_config.from_source_checkpoint` instead of `model`; see
+[section 8.6](#86-dflash2-draft-training-and-serving).
+
 For LoRA sampling, set `extra_sampling["peft_config"]` when creating the
 sub-job. This enables the vLLM LoRA manager before the model starts. The
 adapter's `r`, `lora_alpha`, and `target_modules` must match the training
@@ -2282,6 +2314,88 @@ training = SubJobConfig.training_job(
 off by default. Failure snapshots on a failed `/forward-backward` or `/step` are
 independent of these flags. Per-rank operator diagnostics configured by the
 launcher are out of scope for this client-facing surface.
+
+### 8.6 DFlash2 draft training and serving
+
+A DFlash2 draft is a speculative-decoding draft model trained against a frozen
+target. It spans the training sub-job ([section 8.2](#82-trainingconfig)), the
+checkpoint it saves ([section 8.4](#84-source_checkpoint_info)), and a sampling
+sub-job that serves it as the speculator ([section 8.3](#83-inferenceconfig)).
+
+#### Training a draft
+
+`extra_training["model_provider"]` accepts `huggingface`, `arctic` ([section
+8.2](#82-trainingconfig) explains its spelling), and `dflash2`. With `dflash2`,
+`model_name` is the frozen target, and the draft is configured by
+`extra_training["dflash2"]`.
+
+`extra_training["dflash2"]` is required when the provider is `dflash2` and is
+rejected for every other provider. Unknown keys are rejected.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `draft_config` | required | Contents of the draft's `config.json` (`architectures` and `dflash_config`); always required, even with `init_from` |
+| `init_from` | none | Optional existing draft directory (with `model.safetensors`) to warm-start the weights from; the architecture still comes from `draft_config` |
+| `attention_backend` | `sdpa` | `sdpa`, `flex_attention`, or `eager` |
+| `num_anchors` | `512` | Anchor blocks sampled per sequence; greater than zero |
+| `loss_decay_gamma` | `7.0` | Per-slot loss decay; greater than zero, or `null` to disable |
+| `selector_loss_alpha` | `1.0` | Weight of the selector loss; zero or greater |
+| `selector_stop_gradient` | `false` | Detach the selector's inputs so only its own parameters train on its loss |
+| `objective_chunk_blocks` | `128` | Blocks per vocabulary-projection chunk; bounds memory |
+| `seed` | `0` | Seed for draft initialization and anchor sampling |
+
+A `dflash2` job is rejected when any of these hold:
+
+- `activation_checkpointing` is anything other than `false`. The draft
+  recomputes its own forward, so the default of `true` must be overridden.
+- `fp32_parity`, `fp32_residual`, or `text_config_overrides` is set.
+- `ds_config.bf16.bf16_master_weights_and_grads` or
+  `ds_config.bf16.bf16_optimizer_states` is enabled. The service keeps master
+  weights and optimizer states in fp32 for this provider, whatever the job
+  asks for, so these two flags cannot turn that off. Copying a `ds_config` from
+  another job that sets either flag fails.
+- A generic model patch, such as Liger kernels, is requested. Patches are
+  rejected, not ignored.
+- `sp_size` or `ep_size` is greater than one. The provider supports data
+  parallelism only, so both must be `1` or omitted.
+
+Requests use `processing.loss_fn="dflash2"`. It reads `loss_mask`, the usual
+prediction-aligned supervision mask, and does not use vocabulary `action_masks` or
+`compute_logprobs`. Its ratio metrics are returned as additive
+`loss_term_<name>__num` and `loss_term_<name>__den` pairs; divide them to get exact
+pooled ratios.
+
+```python
+training = SubJobConfig.training_job(
+    model_name="Qwen/Qwen3-8B",  # the frozen target
+    optimizer={"name": "AdamW", "lr": 1e-4},
+    max_seq_len=2048,
+    train_batch_size=8,
+    n_gpus=8,
+    extra_training={
+        "model_provider": "dflash2",
+        "activation_checkpointing": False,
+        "dflash2": {"draft_config": draft_config},  # contents of the draft's config.json
+    },
+)
+```
+
+#### Serving a trained draft
+
+To serve a draft trained with the `dflash2` provider, set
+`vllm_config.speculative_config.from_source_checkpoint` to `true` instead of
+`model`, and name the training job's weights-only checkpoint in
+`source_checkpoint_info` (`checkpoint_id` and `source_job_id`). The checkpoint
+becomes the draft model, `model_name` stays the target, and the flag is not
+forwarded to vLLM. The checkpoint is not treated as a LoRA adapter.
+
+The flag is rejected unless all of these hold:
+
+- The job is a sampling job.
+- `source_checkpoint_info` names a checkpoint saved by Cortex Training, not an
+  `external_stage_path`.
+- `speculative_config.model` is not set. A job names its draft either by `model`
+  or by this flag, not both.
 
 ---
 

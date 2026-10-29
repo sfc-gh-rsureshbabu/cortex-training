@@ -1000,6 +1000,7 @@ class TestOperationMetrics:
         "wait_for_job",
         "get_job",
         "list_jobs",
+        "list_models",
         "cancel_job",
         "get_capacity",
         "get_capacity_breakdown",
@@ -2214,6 +2215,27 @@ class TestCreateJob:
             c.create_job_from_body(body)
         c._session.post.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("provider", "sent"),
+        [("arctic", "prime_rl"), ("prime_rl", "prime_rl"), ("huggingface", "huggingface")],
+    )
+    def test_create_job_from_body_sends_arctic_provider_as_prime_rl(self, provider, sent):
+        c = _make_client(post_json={"job_id": "srv-raw"})
+        body = {
+            "sub_job_configs": [
+                {
+                    "job_type": "training",
+                    "model_name": "gpt2",
+                    "training_config": {"model_provider": provider},
+                },
+            ],
+        }
+
+        c.create_job_from_body(body)
+
+        posted = c._session.post.call_args.kwargs["json"]
+        assert posted["sub_job_configs"][0]["training_config"]["model_provider"] == sent
+
     def test_create_job_from_body_ignores_absent_peft_config(self):
         c = _make_client(post_json={"job_id": "srv-raw"})
         body = {
@@ -2407,6 +2429,18 @@ class TestReadAndControl:
         c = _make_client(get_json={"jobs": []})
         c.list_jobs(status="running")
         c._session.get.assert_called_once_with(c._prefix, params={"status": "running"})
+
+    def test_list_models_returns_models_from_models_route(self):
+        models = [
+            {"name": "Qwen/Qwen3-0.6B"},
+            {"name": "Qwen/Qwen3-8B"},
+        ]
+        c = _make_client(get_json={"models": models})
+
+        assert c.list_models() == models
+        c._session.get.assert_called_once_with(
+            f"{c.base_url}/api/v2/{c.endpoint}/models"
+        )
 
     def test_cancel_job_uses_colon_action(self):
         c = _make_client(post_json={})
@@ -8325,17 +8359,20 @@ class TestChunkedArtifactDownload:
 
 # ─── A database or schema the API can't find ──────────────────────────────
 
-# What the API returns, with HTTP 400, when the database or schema in the URL can't be resolved.
-_FAILED_REQUEST = {"code": "517602", "message": "Schema MY_DB.SCH is not found or not authorized"}
+def _failed_request(client):
+    """What the API returns, with HTTP 400, when the client's URL DATABASE.SCHEMA can't be resolved."""
+    return {"code": "517602", "message": f"Schema {client.database}.{client.schema} is not found or not authorized"}
 
 
 class TestMissingDatabase:
     @staticmethod
-    def _client(database="MY_DB", schema="PUBLIC", *, profile=None, role=None):
+    def _client(database="MY_DB", schema="PUBLIC", *, profile=None, role=None, pat=False):
         c = CortexTrainingClient(
             base_url="https://test.snowflakecomputing.com", database=database, schema=schema
         )
         c._session = MagicMock()
+        if pat:
+            c._session.headers = {"X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN"}
         if profile is not False and (profile or role):
             c._auth_provider = MagicMock()
             c._auth_provider.get_token.return_value = "session-token"
@@ -8344,22 +8381,29 @@ class TestMissingDatabase:
         return c
 
     def test_a_pat_client_gets_a_clear_error_and_nothing_runs(self):
-        c = self._client()
+        c = self._client(pat=True)
         c.max_retries = 5
-        c._session.get.return_value = _make_error_response(_FAILED_REQUEST, 400)
+        c._session.get.return_value = _make_error_response(_failed_request(c), 400)
         with pytest.raises(nc.DatabaseAccessError) as exc:
             c._send("GET", f"{c.base_url}/test")
         assert str(exc.value) == (
-            "Role <ROLE> (couldn't determine your role) can't find database MY_DB.\n"
-            "- If it doesn't exist: run `CREATE DATABASE IF NOT EXISTS MY_DB` (or ask an admin to).\n"
-            "- If it exists: ask an admin to run `GRANT USAGE ON DATABASE MY_DB TO ROLE <ROLE>`.\n"
+            "Your PAT's role (its role restriction, or your user's DEFAULT_ROLE if it has none) "
+            "can't find database MY_DB or its schema PUBLIC.\n"
+            "- If that's the wrong role: restrict the PAT to a role that has access, or run "
+            "`ALTER USER <USER> SET DEFAULT_ROLE = <ROLE>`. Snowsight shows the token's role under "
+            "Settings > Authentication.\n"
+            "- If they don't exist: run `CREATE DATABASE IF NOT EXISTS MY_DB` and "
+            "`CREATE SCHEMA IF NOT EXISTS MY_DB.PUBLIC` (or ask an admin to).\n"
+            "- If they exist: ask an admin to run `GRANT USAGE ON DATABASE MY_DB TO ROLE <ROLE>` and "
+            "`GRANT USAGE ON SCHEMA MY_DB.PUBLIC TO ROLE <ROLE>`.\n"
             "- Or use another database: --database NAME / CORTEX_TRAINING_DATABASE."
         )
         c._session.post.assert_not_called()  # no SQL, nothing created
         c._session.get.assert_called_once()  # not retried
         error = exc.value
         assert (error.kind, error.name, error.role, error.statement) == (
-            "database", "MY_DB", None, "CREATE DATABASE IF NOT EXISTS MY_DB"
+            "schema", "MY_DB.PUBLIC", None,
+            "CREATE DATABASE IF NOT EXISTS MY_DB; CREATE SCHEMA IF NOT EXISTS MY_DB.PUBLIC",
         )
         assert "cortex-training login" not in str(error)  # not on main until the new login ships
         assert error.response.status_code == 400
@@ -8367,24 +8411,54 @@ class TestMissingDatabase:
 
     def test_a_profile_client_names_its_role_and_profile(self):
         c = self._client(profile="prod", role="TRAINER")
-        c._session.get.return_value = _make_error_response(_FAILED_REQUEST, 400)
+        c._session.get.return_value = _make_error_response(_failed_request(c), 400)
         with pytest.raises(nc.DatabaseAccessError) as exc:
             c._send("GET", f"{c.base_url}/test")
         message = str(exc.value)
-        assert message.startswith("Role TRAINER can't find database MY_DB (from profile prod).\n")
-        assert "GRANT USAGE ON DATABASE MY_DB TO ROLE TRAINER" in message
+        assert message.startswith(
+            "Role TRAINER can't find database MY_DB or its schema PUBLIC (from profile prod).\n"
+        )
+        assert "GRANT USAGE ON SCHEMA MY_DB.PUBLIC TO ROLE TRAINER" in message
+        assert "PAT" not in message
         assert exc.value.role == "TRAINER"
         c._session.post.assert_not_called()
 
+    def test_a_client_without_a_pat_or_profile_does_not_claim_a_pat(self):
+        c = self._client()
+        c._session.get.return_value = _make_error_response(_failed_request(c), 400)
+        with pytest.raises(nc.DatabaseAccessError) as exc:
+            c._send("GET", f"{c.base_url}/test")
+        message = str(exc.value)
+        assert message.splitlines()[0] == (
+            "Role <ROLE> (couldn't determine your role) can't find database MY_DB or its schema PUBLIC."
+        )
+        assert "PAT" not in message
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            pytest.param('Schema "my db".PUBLIC is not found or not authorized', id="quoted-name"),
+            pytest.param("Schema MY_DB.PUBLIC is not found or not authorized.", id="trailing-period"),
+            pytest.param("Schema MY_DB.PUBLIC is not found or not authorized for role R", id="appended-detail"),
+        ],
+    )
+    def test_the_message_is_explained_with_small_wording_changes(self, message):
+        c = self._client(profile="prod", role="TRAINER")
+        body = {"code": "517602", "message": message}
+        c._session.get.return_value = _make_error_response(body, 400)
+        with pytest.raises(nc.DatabaseAccessError) as exc:
+            c._send("GET", f"{c.base_url}/test")
+        assert exc.value.name == "MY_DB.PUBLIC"
+
     def test_the_default_profile_is_named_as_such(self):
         c = self._client(profile=None, role="TRAINER")
-        c._session.get.return_value = _make_error_response(_FAILED_REQUEST, 400)
+        c._session.get.return_value = _make_error_response(_failed_request(c), 400)
         with pytest.raises(nc.DatabaseAccessError, match=r"\(from your default Snowflake profile\)"):
             c._send("GET", f"{c.base_url}/test")
 
     def test_a_non_public_schema_covers_both_database_and_schema(self):
         c = self._client(schema="CUSTOM", profile="prod", role="TRAINER")
-        c._session.get.return_value = _make_error_response(_FAILED_REQUEST, 400)
+        c._session.get.return_value = _make_error_response(_failed_request(c), 400)
         with pytest.raises(nc.DatabaseAccessError) as exc:
             c._send("GET", f"{c.base_url}/test")
         assert str(exc.value).splitlines()[:3] == [
@@ -8402,8 +8476,22 @@ class TestMissingDatabase:
         ("body", "status"),
         [
             pytest.param({"code": "517604", "message": 'invalid hardware "NOT_A_GPU"'}, 400, id="other-code"),
-            pytest.param({"message": "Schema MY_DB.SCH is not found or not authorized"}, 400, id="no-code"),
-            pytest.param({"code": "517602", "message": "Schema MY_DB.SCH is not found or not authorized"}, 422, id="not-400"),
+            pytest.param({"message": "Schema MY_DB.PUBLIC is not found or not authorized"}, 400, id="no-code"),
+            pytest.param({"code": "517602", "message": "Schema MY_DB.PUBLIC is not found or not authorized"}, 422, id="not-400"),
+            pytest.param({"code": "517602", "message": "Unsupported model: x/y"}, 400, id="invalid-request"),
+            pytest.param({"code": "517602"}, 400, id="invalid-request-no-message"),
+            pytest.param(
+                {"code": "517602", "message": "Stage MY_DB.PUBLIC.EXPORTS is not found or not authorized"}, 400,
+                id="stage-not-found",
+            ),
+            pytest.param(
+                {"code": "517602", "message": "Experiment MY_DB.PUBLIC.EXP not found or not authorized"}, 400,
+                id="experiment-not-found",
+            ),
+            pytest.param(
+                {"code": "517602", "message": "CREATE EXPERIMENT privilege required on schema MY_DB.PUBLIC"}, 400,
+                id="missing-create-experiment",
+            ),
             pytest.param({}, 404, id="missing-job"),
             pytest.param({"message": "boom"}, 500, id="server-error"),
         ],
@@ -8418,7 +8506,7 @@ class TestMissingDatabase:
 
     def test_routes_without_a_database_leave_the_error_as_it_is(self):
         c = self._client()
-        c._session.get.return_value = _make_error_response(_FAILED_REQUEST, 400)
+        c._session.get.return_value = _make_error_response(_failed_request(c), 400)
         with pytest.raises(nc.requests.exceptions.HTTPError) as exc:
             c._send("GET", f"{c.base_url}/test", explain_database=False)
         assert not isinstance(exc.value, nc.DatabaseAccessError)
@@ -8426,7 +8514,7 @@ class TestMissingDatabase:
     def test_a_job_client_leaves_the_error_as_it_is(self):
         c = self._client()
         job_client = c.for_job({"database_name": "OTHER_DB", "schema_name": "PUBLIC"})
-        c._session.get.return_value = _make_error_response(_FAILED_REQUEST, 400)
+        c._session.get.return_value = _make_error_response(_failed_request(job_client), 400)
         with pytest.raises(nc.requests.exceptions.HTTPError) as exc:
             job_client._send("GET", f"{c.base_url}/test")
         assert not isinstance(exc.value, nc.DatabaseAccessError)
