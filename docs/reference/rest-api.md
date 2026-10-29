@@ -3458,9 +3458,11 @@ raised unchanged.
 ### 14.8 Calling a deployment
 
 `CortexTrainingClient` does not call the deployment itself; any
-OpenAI-compatible client does. This is the behavior a caller sees, as checked
-by the `test_tc6_*` cases in `tests/test_model_deployment_e2e.py`. The
-streaming example (`examples/model_deployment/streaming.py`) codes against it.
+OpenAI-compatible client does. This is the behavior a caller sees. The
+`test_tc6_*` cases in `tests/test_model_deployment_e2e.py` check the path,
+auth, `model`, and length-limit rows against a `READY` deployment; the error
+rows are not exercised by a live test. The streaming example
+(`examples/model_deployment/streaming.py`) codes against it.
 
 | Item | Behavior |
 |---|---|
@@ -3468,9 +3470,11 @@ streaming example (`examples/model_deployment/streaming.py`) codes against it.
 | Auth | `Authorization: Bearer <PAT>` and `X-Snowflake-Authorization-Token-Type: PROGRAMMATIC_ACCESS_TOKEN` |
 | `model` | The deployment ID, `sf-ct-<UUID>`; responses echo it as `model` |
 | Length limit | `max_completion_tokens`. `max_tokens` is rejected with HTTP 400, `{"error": {"type": "invalid_request_error", "param": "max_tokens", "code": "unsupported_parameter"}}` |
-| Not ready | HTTP 503 `endpoint_failed` while the deployment is `PENDING` or `INITIALIZING`, and briefly after it is dropped. Retry, or check its status with `get_model_deployment` |
-| Not found | HTTP 404 `model_not_found` for an unknown or malformed ID, or a deployment that has failed or been dropped |
-| Not enabled | HTTP 403 `feature_disabled` while model deployments are not enabled for the account, or HTTP 405 while the inference routes are not |
+| Not ready | HTTP 503 `endpoint_failed` while the deployment is `PENDING` or `INITIALIZING`, and possibly briefly after it is dropped. Check its status with `get_model_deployment` |
+| Unavailable | HTTP 503 on a `READY` deployment: `endpoint_failed` when it is temporarily unavailable, or `frontend_overloaded` when the service is busy. Retry shortly |
+| Not found | HTTP 404 `model_not_found` for an unknown or malformed ID, a deployment that has failed or been dropped, or one the caller does not own or that lives in another schema. The last two are deliberate, so a caller cannot tell whether someone else's deployment exists |
+| Not permitted | HTTP 403 `feature_disabled` when Cortex Training or model deployments are not enabled for the account, or its trial has expired or has no expiration configured; the message says which. HTTP 403 `deployment_class_not_served` when the deployment exists but this endpoint does not serve its class |
+| Routes off | HTTP 405 with an empty body when the inference routes are turned off for the account, or for a wrong HTTP method |
 
 Without `stream`, the response is one `chat.completion` object with
 `choices[0].message.content`, `finish_reason`, and `usage`.

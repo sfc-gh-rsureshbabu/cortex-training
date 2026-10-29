@@ -79,12 +79,24 @@ base_url = ready["base_url"]
 
 ## 3. Stream a chat completion
 
-Authenticate with the same programmatic access token (PAT) and pass the
-deployment ID as `model`. Call it once the deployment is `READY`: before that,
-requests return HTTP 503 (`endpoint_failed`). An unknown, failed, or dropped
-deployment returns HTTP 404. Inference is not yet available on all accounts;
-until it is enabled for yours, requests return HTTP 403 or 405. See
-[REST API reference section 14.8](../../reference/rest-api.md#148-calling-a-deployment).
+Authenticate with a Snowflake programmatic access token (PAT), even if you
+created the client from a connection profile, and pass the deployment ID as
+`model`. The examples below read it from `PAT`:
+
+```python
+import os
+
+PAT = os.environ["PAT"]
+```
+
+Call the deployment once it is `READY`: before that, requests return HTTP 503
+(`endpoint_failed`). A `READY` deployment can also return 503 while it is
+temporarily unavailable or the service is busy; retry shortly. An unknown,
+failed, or dropped deployment, or one you do not own, returns HTTP 404.
+Inference is not yet available on all accounts; until it is enabled for yours,
+requests return HTTP 403 (`feature_disabled`). See
+[REST API reference section 14.8](../../reference/rest-api.md#148-calling-a-deployment)
+for every case.
 
 With the `openai` package:
 

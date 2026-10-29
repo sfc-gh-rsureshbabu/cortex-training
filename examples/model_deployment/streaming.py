@@ -118,10 +118,10 @@ class ChatResult:
 
 # What each status means for a deployment call; see rest-api.md section 14.8.
 _STATUS_HINTS = {
-    403: "inference may not be enabled on this account yet",
-    404: "the deployment is unknown, failed, or was dropped",
-    405: "inference may not be enabled on this account yet",
-    503: "the deployment is not READY yet, or was just dropped",
+    403: "the account or deployment may not be served here (see the message)",
+    404: "the deployment is unknown, not visible to you, failed, or was dropped",
+    405: "the inference routes may not be enabled on this account",
+    503: "the deployment is not READY yet, or is temporarily unavailable; retry shortly",
 }
 
 

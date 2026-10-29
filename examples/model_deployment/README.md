@@ -35,7 +35,7 @@ Bearer token. Pass `config=` with a JSON file from
 it creates a deployment, because profile connections send a session token and
 the endpoint's documented authentication is the PAT.
 Inference is not yet available on all accounts: until it is enabled for yours,
-chat calls return HTTP 403 or 405.
+chat calls return HTTP 403.
 
 ## Hardware
 
@@ -131,12 +131,16 @@ for every rule.
 ## Troubleshooting
 
 - **HTTP 503 from chat completions.** The deployment is not `READY` yet, or
-  was just dropped. Check it with
-  `cortex-training model-deployment describe sf-ct-DEPLOYMENT_UUID`.
-- **HTTP 404 from chat completions.** The deployment ID is unknown, or the
-  deployment failed or was dropped.
-- **HTTP 403 or 405 from chat completions.** Inference is not enabled on the
-  account yet.
+  is temporarily unavailable or busy. Check it with
+  `cortex-training model-deployment describe sf-ct-DEPLOYMENT_UUID`, and retry
+  shortly if it is `READY`.
+- **HTTP 404 from chat completions.** The deployment ID is unknown, the
+  deployment failed or was dropped, or it belongs to another owner or schema.
+- **HTTP 403 from chat completions.** The account may not call deployments:
+  inference is not enabled yet, or its trial has expired. The error message
+  says which.
+- **HTTP 405 from chat completions.** The inference routes are turned off for
+  the account.
 - **`Unsupported model for a model deployment`.** The server does not deploy
   that model; pick another.
 - **Waiting fails with `FAILED`.** Read the deployment's logs with
