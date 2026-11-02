@@ -15,7 +15,7 @@
 
 """Public Python API for Cortex Training."""
 
-__version__ = "0.0.2"
+__version__ = "0.0.4"
 
 from . import wire
 from .client import AccountJobListUnavailable
@@ -36,6 +36,7 @@ from .client import SubJobConfig
 from .client import TrainingConfig
 from .client import build_forward_backward_kwargs
 from .client import build_forward_backward_payload
+from .client import create_job_body_from_job
 from .client import serialize_forward_backward_args
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "CortexTrainingClient",
     "build_forward_backward_kwargs",
     "build_forward_backward_payload",
+    "create_job_body_from_job",
     "ChunkGroupError",
     "ChunkGroupRestartError",
     "ChunkGroupConflictError",
