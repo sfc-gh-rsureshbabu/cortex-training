@@ -6738,6 +6738,8 @@ class CortexTrainingClient:
         # unexpected decode error is worse than a poll that raises the real one.
         except Exception:
             logger.warning("waited generate %s reply not decodable; caller polls", request_id, exc_info=True)
+            # Needed: a success that already decoded has discarded the id (in
+            # _normalize_generate_result_if_needed) before a later step raised.
             self._generate_request_ids.add(request_id)
             return None
 
