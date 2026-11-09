@@ -29,12 +29,14 @@ outcome of a caller's training or inference operation.
 from __future__ import annotations
 
 import atexit
+import bisect
 import logging
 import math
 import os
 import queue
 import threading
 import time
+import uuid
 import weakref
 from collections.abc import Mapping
 from typing import Any
@@ -55,8 +57,51 @@ _SNOWFLAKE_HOST_SUFFIX = ".snowflakecomputing.com"
 _AUTH_REJECTED_STATUSES = {401, 403}
 _DEFAULT_QUEUE_SIZE = 1024
 _WORKER_IDLE_SECONDS = 30.0
+_DEFAULT_METRIC_FLUSH_INTERVAL_SECONDS = 30.0
+# The bounds past a minute are for downloads and waits, and the slow-call
+# budgets of 2, 10 and 15 minutes; 30 minutes is wait_for_job's default timeout.
+_DURATION_BUCKET_BOUNDS_MS = (
+    10.0,
+    50.0,
+    100.0,
+    250.0,
+    500.0,
+    1_000.0,
+    2_500.0,
+    5_000.0,
+    10_000.0,
+    30_000.0,
+    60_000.0,
+    120_000.0,
+    300_000.0,
+    600_000.0,
+    900_000.0,
+    1_800_000.0,
+)
+# A call that failed the way its callers expect (see the client's
+# ``_expected_failure``) is counted apart from real failures.
+_OUTCOMES = frozenset({"success", "failure", "expected_failure", "cancelled"})
+_OPERATION_COUNT = "cortex.training.client.operation.count"
+_OPERATION_DURATION = "cortex.training.client.operation.duration"
+_OPERATION_RETRIES = "cortex.training.client.operation.retries"
+_OPERATION_REQUESTS = "cortex.training.client.operation.requests"
 _STOP = object()
 _EMITTERS: weakref.WeakSet["OtlpMetricEmitter"] = weakref.WeakSet()
+# One id per process (an SDK script, a CLI command, a TUI session), sent on its
+# records as ``service.instance.id`` so they can be grouped and counted. Metrics
+# leave it out: on a backend that keeps a series per attribute set, every process
+# would add its own, and the call totals don't need it.
+_INSTANCE_ID = str(uuid.uuid4())
+
+
+def _new_instance_id() -> None:
+    """A forked child is another process: it gets its own id."""
+    global _INSTANCE_ID
+    _INSTANCE_ID = str(uuid.uuid4())
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_new_instance_id)
 
 
 class SessionTokenProvider(Protocol):
@@ -240,7 +285,14 @@ class CachedSessionTokenProvider:
 
 
 class OtlpMetricEmitter:
-    """Emit OTLP log records as best-effort client-side metrics."""
+    """Emit best-effort client-side telemetry.
+
+    Two signals leave the client. :meth:`emit` sends one OTLP log record per
+    call with its details. :meth:`record_operation` adds every call to an
+    in-process aggregate per operation, outcome and surface, which is exported
+    as OTLP metrics once per flush interval, so call totals cost a few data
+    points per interval however many calls there are.
+    """
 
     def __init__(
         self,
@@ -255,6 +307,7 @@ class OtlpMetricEmitter:
         failure_cooldown_seconds: float = _FAILURE_COOLDOWN_SECONDS,
         background: bool = True,
         queue_size: int = _DEFAULT_QUEUE_SIZE,
+        metric_flush_interval_seconds: float = _DEFAULT_METRIC_FLUSH_INTERVAL_SECONDS,
     ):
         self.base_url = base_url.rstrip("/")
         self.account_host = urlparse(self.base_url).hostname
@@ -272,6 +325,7 @@ class OtlpMetricEmitter:
         self._session = self._new_session()
         self._telemetry_base_url: str | None = None
         self._hostname_lock = threading.Lock()
+        self._export_lock = threading.Lock()
         self._consecutive_failures = 0
         self._disabled_until = 0.0
         self._background = background
@@ -281,6 +335,10 @@ class OtlpMetricEmitter:
         self._pending_condition = threading.Condition()
         self._pending = 0
         self._closed = False
+        self._metric_flush_interval_seconds = metric_flush_interval_seconds
+        self._metric_lock = threading.Lock()
+        self._metric_aggregates: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+        self._next_metric_flush = 0.0
         _EMITTERS.add(self)
 
     def _new_session(self) -> requests.Session:
@@ -295,6 +353,7 @@ class OtlpMetricEmitter:
         self._session = self._new_session()
         self._telemetry_base_url = None
         self._hostname_lock = threading.Lock()
+        self._export_lock = threading.Lock()
         self._consecutive_failures = 0
         self._disabled_until = 0.0
         self._queue = queue.Queue(maxsize=self._queue_size)
@@ -302,6 +361,9 @@ class OtlpMetricEmitter:
         self._worker_lock = threading.Lock()
         self._pending_condition = threading.Condition()
         self._pending = 0
+        self._metric_lock = threading.Lock()
+        self._metric_aggregates = {}
+        self._next_metric_flush = 0.0
         self.token_provider._ensure_process()
 
     def _is_disabled(self) -> bool:
@@ -344,6 +406,21 @@ class OtlpMetricEmitter:
             self._telemetry_base_url = _telemetry_base_url(hostname)
             return self._telemetry_base_url
 
+    def _resolve_collector(self) -> None:
+        """Worker thread: get a session token and the collector's URL before an
+        export needs them, so a flush at exit, bounded by its timeout, has only
+        its posts left to send. A failure counts like a failed export."""
+        if self._telemetry_base_url is not None or self._is_disabled():
+            return
+        try:
+            self._get_telemetry_base_url(self.token_provider.get_token())
+        except Exception as exc:
+            logger.debug("client telemetry collector lookup failed", exc_info=True)
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in _AUTH_REJECTED_STATUSES:
+                self._invalidate_auth()
+            self._note_failure()
+
     def _ensure_worker(self) -> None:
         worker = self._worker
         if worker is not None and worker.is_alive():
@@ -363,37 +440,67 @@ class OtlpMetricEmitter:
 
     def _run(self) -> None:
         try:
+            self._resolve_collector()
             while True:
+                with self._metric_lock:
+                    next_flush = self._next_metric_flush
+                timeout = _WORKER_IDLE_SECONDS
+                if next_flush:
+                    timeout = min(timeout, max(next_flush - time.monotonic(), 0.0))
                 try:
-                    item = self._queue.get(timeout=_WORKER_IDLE_SECONDS)
+                    item = self._queue.get(timeout=timeout)
                 except queue.Empty:
-                    return
+                    # Idle: export any due aggregate, and exit once none is left.
+                    self._flush_metric_aggregates()
+                    with self._metric_lock:
+                        if not self._metric_aggregates:
+                            return
+                    continue
                 if item is _STOP:
                     self._queue.task_done()
                     return
                 operation, value, attributes, time_unix_nano = item
                 try:
-                    self._emit_sync(
-                        operation,
-                        value,
-                        attributes=attributes,
-                        time_unix_nano=time_unix_nano,
-                    )
+                    with self._export_lock:
+                        self._emit_sync(
+                            operation,
+                            value,
+                            attributes=attributes,
+                            time_unix_nano=time_unix_nano,
+                        )
                 finally:
                     self._queue.task_done()
                     with self._pending_condition:
                         self._pending -= 1
                         self._pending_condition.notify_all()
+                with self._metric_lock:
+                    metrics_due = bool(
+                        self._next_metric_flush
+                        and time.monotonic() >= self._next_metric_flush
+                    )
+                if metrics_due:
+                    self._flush_metric_aggregates()
         finally:
             with self._worker_lock:
                 if self._worker is threading.current_thread():
                     self._worker = None
-            if not self._closed and not self._queue.empty():
+            if not self._closed and (
+                not self._queue.empty() or self._has_metric_aggregates()
+            ):
                 self._ensure_worker()
 
+    def _has_metric_aggregates(self) -> bool:
+        with self._metric_lock:
+            return bool(self._metric_aggregates)
+
     def flush(self, timeout: float = 1.0) -> bool:
-        """Wait briefly for queued metrics, primarily during interpreter exit."""
+        """Wait briefly for queued metrics, primarily during interpreter exit.
+
+        The whole call, the operation-count export included, stays within
+        ``timeout``.
+        """
         deadline = time.monotonic() + timeout
+        self._flush_metric_aggregates(deadline=deadline)
         with self._pending_condition:
             while self._pending:
                 remaining = deadline - time.monotonic()
@@ -403,13 +510,19 @@ class OtlpMetricEmitter:
             return True
 
     def close(self, timeout: float = 1.0) -> None:
-        """Flush queued events and release this emitter's worker and sessions."""
+        """Flush queued events and release this emitter's worker and sessions.
+
+        Closing is final: interpreter exit doesn't wait on an emitter that is
+        closed or being closed (on another thread, as the TUI's quit does), so
+        ``timeout`` bounds how long its telemetry can hold up exit, even while
+        an export it gave up on is still in flight.
+        """
         self._ensure_process()
+        _EMITTERS.discard(self)
         worker = self._worker
         if self._closed and (worker is None or not worker.is_alive()):
             self._session.close()
             self.token_provider.close()
-            _EMITTERS.discard(self)
             return
         self._closed = True
         deadline = time.monotonic() + timeout
@@ -424,7 +537,293 @@ class OtlpMetricEmitter:
         if worker is None or not worker.is_alive():
             self._session.close()
             self.token_provider.close()
-            _EMITTERS.discard(self)
+
+    def record_operation(
+        self,
+        operation: str,
+        *,
+        outcome: str,
+        duration_ms: float,
+        retry_count: int = 0,
+        request_count: int = 0,
+        surface: str | None = None,
+    ) -> None:
+        """Add one operation to a bounded, in-process metric aggregate.
+
+        Every call is counted, successes and failures alike, so the exported
+        totals are a denominator for failure rates. ``outcome`` is ``success``,
+        ``failure``, ``expected_failure`` or ``cancelled``.
+        """
+        try:
+            self._ensure_process()
+            if self._closed or outcome not in _OUTCOMES:
+                return
+            duration = max(float(duration_ms), 0.0)
+            if not math.isfinite(duration):
+                return
+            now_ns = time.time_ns()
+            key = (str(operation), outcome, surface)
+            bucket_index = bisect.bisect_left(_DURATION_BUCKET_BOUNDS_MS, duration)
+            with self._metric_lock:
+                aggregate = self._metric_aggregates.get(key)
+                if aggregate is None:
+                    aggregate = {
+                        "count": 0,
+                        "duration_sum": 0.0,
+                        "duration_min": duration,
+                        "duration_max": duration,
+                        "bucket_counts": [0] * (len(_DURATION_BUCKET_BOUNDS_MS) + 1),
+                        "retry_count": 0,
+                        "request_count": 0,
+                        # A delta point covers its first to its last call in
+                        # this export window, not the time since the last export.
+                        "start_time_unix_nano": now_ns,
+                        "time_unix_nano": now_ns,
+                    }
+                    self._metric_aggregates[key] = aggregate
+                    if not self._next_metric_flush:
+                        self._next_metric_flush = (
+                            time.monotonic() + self._metric_flush_interval_seconds
+                        )
+                aggregate["count"] += 1
+                aggregate["duration_sum"] += duration
+                aggregate["duration_min"] = min(aggregate["duration_min"], duration)
+                aggregate["duration_max"] = max(aggregate["duration_max"], duration)
+                aggregate["bucket_counts"][bucket_index] += 1
+                aggregate["retry_count"] += max(int(retry_count), 0)
+                aggregate["request_count"] += max(int(request_count), 0)
+                aggregate["time_unix_nano"] = now_ns
+            if self._background:
+                self._ensure_worker()
+        except Exception:
+            logger.debug("client metric aggregation failed", exc_info=True)
+
+    def _flush_metric_aggregates(self, deadline: float | None = None) -> None:
+        """Export the current aggregates, by ``deadline`` when one is given.
+
+        Counts that are not exported (endpoint failing or cooling down, export
+        lock busy past the deadline) are merged back and go out with the next
+        export, so totals stay usable as a failure-rate denominator.
+        """
+        # In a forked child this replaces locks the parent may have held.
+        self._ensure_process()
+        with self._metric_lock:
+            if not self._metric_aggregates:
+                self._next_metric_flush = 0.0
+                return
+            aggregates = self._metric_aggregates
+            self._metric_aggregates = {}
+            self._next_metric_flush = 0.0
+        exported = False
+        if deadline is None:
+            acquired = self._export_lock.acquire()
+        else:
+            acquired = self._export_lock.acquire(
+                timeout=max(deadline - time.monotonic(), 0.0)
+            )
+        if acquired:
+            try:
+                timeout = self.timeout
+                if deadline is not None:
+                    timeout = min(timeout, deadline - time.monotonic())
+                if timeout > 0:
+                    exported = self._emit_metrics_sync(aggregates, timeout=timeout)
+            finally:
+                self._export_lock.release()
+        if not exported:
+            self._merge_back_metric_aggregates(aggregates)
+
+    def _merge_back_metric_aggregates(
+        self, aggregates: Mapping[tuple[str, str, str | None], Mapping[str, Any]]
+    ) -> None:
+        # Keys are bounded (operation x outcome x surface), so a failing
+        # endpoint cannot grow this without bound.
+        with self._metric_lock:
+            for key, old in aggregates.items():
+                new = self._metric_aggregates.get(key)
+                if new is None:
+                    self._metric_aggregates[key] = dict(old)
+                    continue
+                new["count"] += old["count"]
+                new["duration_sum"] += old["duration_sum"]
+                new["duration_min"] = min(new["duration_min"], old["duration_min"])
+                new["duration_max"] = max(new["duration_max"], old["duration_max"])
+                new["bucket_counts"] = [
+                    a + b for a, b in zip(new["bucket_counts"], old["bucket_counts"])
+                ]
+                new["retry_count"] += old["retry_count"]
+                new["request_count"] += old["request_count"]
+                new["start_time_unix_nano"] = min(
+                    new["start_time_unix_nano"], old["start_time_unix_nano"]
+                )
+            if self._metric_aggregates and not self._next_metric_flush:
+                self._next_metric_flush = (
+                    time.monotonic() + self._metric_flush_interval_seconds
+                )
+
+    def _resource_attributes(self, *, instance_id: bool = True) -> list[dict[str, Any]]:
+        """The resource attributes of an export; ``service.instance.id`` only for
+        records (see ``_INSTANCE_ID``)."""
+        attributes = [
+            {
+                "key": "service.name",
+                "value": {"stringValue": self.service_name},
+            },
+            {
+                "key": "snowflake.account_host",
+                "value": {"stringValue": self.account_host},
+            },
+        ]
+        if self.service_version:
+            attributes.append(
+                {
+                    "key": "service.version",
+                    "value": {"stringValue": self.service_version},
+                }
+            )
+        if instance_id:
+            attributes.append(
+                {"key": "service.instance.id", "value": {"stringValue": _INSTANCE_ID}}
+            )
+        return attributes
+
+    @staticmethod
+    def _metric_point_attributes(
+        operation: str, outcome: str, surface: str | None
+    ) -> list[dict[str, Any]]:
+        attributes = [
+            {"key": "operation", "value": {"stringValue": operation}},
+            {"key": "outcome", "value": {"stringValue": outcome}},
+        ]
+        if surface:
+            attributes.append(
+                {"key": "client.surface", "value": {"stringValue": surface}}
+            )
+        return attributes
+
+    def _emit_metrics_sync(
+        self,
+        aggregates: Mapping[tuple[str, str, str | None], Mapping[str, Any]],
+        *,
+        timeout: float | None = None,
+    ) -> bool:
+        """Export one delta batch to the OTLP HTTP metrics endpoint.
+
+        Returns whether the batch was accepted.
+        """
+        self._ensure_process()
+        if not aggregates:
+            return True
+        if self._is_disabled():
+            return False
+        try:
+            token = self.token_provider.get_token()
+            telemetry_base_url = self._get_telemetry_base_url(token)
+            count_points = []
+            duration_points = []
+            retry_points = []
+            request_points = []
+            for (operation, outcome, surface), aggregate in sorted(
+                aggregates.items(), key=lambda item: tuple(str(k) for k in item[0])
+            ):
+                common = {
+                    "attributes": self._metric_point_attributes(
+                        operation, outcome, surface
+                    ),
+                    "startTimeUnixNano": str(aggregate["start_time_unix_nano"]),
+                    "timeUnixNano": str(aggregate["time_unix_nano"]),
+                }
+                count_points.append({**common, "asInt": str(aggregate["count"])})
+                duration_points.append(
+                    {
+                        **common,
+                        "count": str(aggregate["count"]),
+                        "sum": aggregate["duration_sum"],
+                        "min": aggregate["duration_min"],
+                        "max": aggregate["duration_max"],
+                        "bucketCounts": [
+                            str(value) for value in aggregate["bucket_counts"]
+                        ],
+                        "explicitBounds": list(_DURATION_BUCKET_BOUNDS_MS),
+                    }
+                )
+                retry_points.append({**common, "asInt": str(aggregate["retry_count"])})
+                request_points.append(
+                    {**common, "asInt": str(aggregate["request_count"])}
+                )
+
+            metrics = [
+                {
+                    "name": _OPERATION_COUNT,
+                    "unit": "{operation}",
+                    "sum": {
+                        "aggregationTemporality": 1,
+                        "isMonotonic": True,
+                        "dataPoints": count_points,
+                    },
+                },
+                {
+                    "name": _OPERATION_DURATION,
+                    "unit": "ms",
+                    "histogram": {
+                        "aggregationTemporality": 1,
+                        "dataPoints": duration_points,
+                    },
+                },
+                {
+                    "name": _OPERATION_RETRIES,
+                    "unit": "{retry}",
+                    "sum": {
+                        "aggregationTemporality": 1,
+                        "isMonotonic": True,
+                        "dataPoints": retry_points,
+                    },
+                },
+                {
+                    "name": _OPERATION_REQUESTS,
+                    "unit": "{request}",
+                    "sum": {
+                        "aggregationTemporality": 1,
+                        "isMonotonic": True,
+                        "dataPoints": request_points,
+                    },
+                },
+            ]
+            response = self._session.post(
+                f"{telemetry_base_url}/v1/metrics",
+                headers={
+                    "Authorization": f'Snowflake Token="{token}"',
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json={
+                    "resourceMetrics": [
+                        {
+                            "resource": {
+                                "attributes": self._resource_attributes(instance_id=False)
+                            },
+                            "scopeMetrics": [
+                                {
+                                    "scope": {"name": self.service_name},
+                                    "metrics": metrics,
+                                }
+                            ],
+                        }
+                    ]
+                },
+                timeout=self.timeout if timeout is None else timeout,
+            )
+            response.raise_for_status()
+            self._note_success()
+            return True
+        except Exception as exc:
+            logger.debug("client metric export failed", exc_info=True)
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+            if status in _AUTH_REJECTED_STATUSES:
+                self._invalidate_auth()
+            self._note_failure()
+            return False
 
     def emit(
         self,
@@ -440,12 +839,13 @@ class OtlpMetricEmitter:
                 return
             time_unix_nano = time.time_ns()
             if not self._background:
-                self._emit_sync(
-                    operation,
-                    value,
-                    attributes=attributes,
-                    time_unix_nano=time_unix_nano,
-                )
+                with self._export_lock:
+                    self._emit_sync(
+                        operation,
+                        value,
+                        attributes=attributes,
+                        time_unix_nano=time_unix_nano,
+                    )
                 return
             item = (
                 operation,
@@ -485,23 +885,6 @@ class OtlpMetricEmitter:
                 **dict(attributes or {}),
                 "event.name": operation,
             }
-            resource_attributes = [
-                {
-                    "key": "service.name",
-                    "value": {"stringValue": self.service_name},
-                },
-                {
-                    "key": "snowflake.account_host",
-                    "value": {"stringValue": self.account_host},
-                },
-            ]
-            if self.service_version:
-                resource_attributes.append(
-                    {
-                        "key": "service.version",
-                        "value": {"stringValue": self.service_version},
-                    }
-                )
             response = self._session.post(
                 f"{telemetry_base_url}/v1/logs",
                 headers={
@@ -512,7 +895,7 @@ class OtlpMetricEmitter:
                 json={
                     "resourceLogs": [
                         {
-                            "resource": {"attributes": resource_attributes},
+                            "resource": {"attributes": self._resource_attributes()},
                             "scopeLogs": [
                                 {
                                     "scope": {"name": self.service_name},

@@ -64,21 +64,27 @@ These fail with an error that says what's wrong:
 emits a `FutureWarning` and will be removed in a future release. Use
 `from_configs()` instead.
 
-Tuning knobs on the constructor: `endpoint`, `poll_interval` (0.5s),
-`poll_timeout` (1800s), `poll_backoff_multiplier` (1.25), `poll_max_interval`
-(6s), `pool_maxsize` (1024), `max_retries` (10), and `request_timeout`
-(`(30s connect, 600s read)`). Pass a positive scalar to use the same connect
-and read timeout, or a `(connect, read)` pair. `from_configs` also accepts
-`telemetry_timeout` (3s) for best-effort client metrics.
+### Run other tools with the connection
 
-The client never creates a database. A request that fails because the
-database or schema in its URL can't be found (HTTP 400, code `517602`, message
-`Schema DB.SCHEMA is not found or not authorized`) raises `DatabaseAccessError`
-(see [Exceptions](#exceptions)), which says how to create it, get access to it,
-or use another one. A client from `for_job` raises the plain
-`requests.HTTPError` instead. `client.auto_create_database` is deprecated:
-it is always False. Setting it to True emits a `FutureWarning`; setting it to False
-needs no change.
+Some tools, such as the Arctic Platform launcher used by the OpenHands, SkyRL,
+Harbor and prime-rl recipes, don't use this client. They read
+`ARCTIC_CORTEX_HOST`, `ARCTIC_CORTEX_DATABASE`, `ARCTIC_CORTEX_SCHEMA` and
+`ARCTIC_CORTEX_PAT` from the environment. `cortex_training.env` runs such a
+command with them set, from the same connection `from_configs()` picks:
+
+```bash
+python -m cortex_training.env -- bash run_qwen3_0.6b_gsm8k_grpo_cortex.sh
+python -m cortex_training.env connection=NAME -- <command and its arguments>
+```
+
+The connection must sign in with a programmatic access token (PAT), such as a
+profile with `authenticator = "PROGRAMMATIC_ACCESS_TOKEN"` (as
+`cortex-training login` creates), or `CORTEX_TRAINING_HOST` and
+`CORTEX_TRAINING_PAT`. The host is the form HTTPS calls use: an underscore in
+the account label becomes a dash. The token is only in the command's
+environment; it isn't printed, logged, or left in your shell. On macOS and
+Linux the command replaces the wrapper process, so it gets signals such as
+Ctrl-C directly, and the exit code is the command's. It reads only local files.
 
 ## Client metrics
 
@@ -105,6 +111,28 @@ included.
 Local or mock clients constructed with an explicit `base_url` treat
 `emit_metric` as a no-op. Set `CORTEX_TRAINING_DISABLE_TELEMETRY=1` to skip
 constructing the emitter.
+
+Separately from these events, the client counts every essential operation,
+successes included, whatever the settings above. Counts are kept in memory per
+operation, outcome (`success`, `failure`, `expected_failure` or `cancelled`)
+and `client.surface`, and are exported as OTLP metrics about every 30 seconds
+and when the client is closed: `cortex.training.client.operation.count`,
+`.duration` (a histogram in milliseconds, with buckets ending at 10, 50, 100,
+250 and 500 ms, 1, 2.5, 5, 10 and 30 seconds, and 1, 2, 5, 10, 15 and 30
+minutes), `.retries` and `.requests`. Each export is a few data points
+however many calls were made, so totals and failure rates are available
+without enabling success events. `CORTEX_TRAINING_DISABLE_TELEMETRY=1` turns
+these off too.
+
+A client looks up where to send telemetry when its first call is counted, so
+what is left at the end needs only its posts. `client.close()` sends it,
+waiting at most a second, and so does interpreter exit for a client nobody
+closed. `client.close_telemetry(timeout=...)` sends it, waiting at most
+`timeout` seconds, without closing the client's sessions; a client from
+`for_job` leaves its parent's telemetry alone. Each `cortex-training` command
+calls it as it finishes, waiting at most 2 seconds, and `cortex-training tui`
+as it quits, waiting at most a second. Interpreter exit doesn't wait again on
+telemetry that was closed this way.
 
 Every event carries the `client.surface` record attribute, which names the
 program that made the call:
@@ -133,6 +161,23 @@ Tracked operations:
 The TUI also sends one `download_checkpoint` event for each checkpoint it
 downloads, after the `export_checkpoint` call that gets the files' links.
 
+Each Snowflake Connector login is counted as a `connect` operation. A profile
+client's logins are the one it is built with, a new session after one
+expired, and each download's own session; a PAT client logs in only for
+downloads. The event's `reason` says which: `startup`, `refresh`, `artifact`
+or `fork`. A failed login's event carries the Connector's error number as
+`error.code`, such as `394400` for a rejected PAT; a login that fails while the
+client is being built is not sent, since telemetry needs its session. A login
+inside another operation also adds `connect_count` and `connect_ms` to that
+operation's event.
+
+`cortex-training tui` sends two events of its own:
+
+| Event | Sent | Body |
+|---|---|---|
+| `tui_startup` | Once, when the screen it opened with first shows its data: the job list, or the job it was opened on | `view` (`job_list` or `job`), `duration_ms` from launch, and `client_build_ms`, the part spent reading the config, importing the Connector and signing in. Also counted as an operation |
+| `tui_error` | For each error the TUI writes to its error log, at most once a minute per kind, except a failure already counted as `expected_failure` (a log tail waiting for its job, a download with nothing uploaded yet) | `where` it was logged and `raised_at` (both `path:line function` inside the package), the `operation` that failed with it when one did, and `occurrences` since its kind was last sent; `error.type`, with `error.http_status` and `error.code` for an HTTP error. Never the error's text or the log's label, which can quote job IDs, schemas and paths |
+
 Each emitted event body contains `success`, `duration_ms`, `request_count`,
 `attempt_count`, and `retry_count`. Failures also include a bounded
 `error_message` with common credential patterns redacted. A cancelled
@@ -150,6 +195,16 @@ A `generate` with a positive `wait_seconds` stays open while the server
 waits, so its `duration_ms` includes that wait (up to 40 seconds). If the
 generation fails or is cancelled during the wait, `generate` raises and the
 failure is reported on the `generate` event, not on a `poll_request` one.
+
+Two failures are ones their callers expect rather than faults: a `tail_logs`
+answered that its session isn't there (404, 409 or 410) for a job that has
+ended or isn't running yet (`job_ended`, or a `job_status` other than
+`running`), and a download with nothing uploaded yet (`NoChunksError`). Their
+events still have `success: false`, with `expected: true`, and they are counted
+under the `expected_failure` outcome, so failure rates can leave them out. A
+`tail_logs` that fails while its job runs, fails another way after such an
+answer (a reset, a timeout, no token, a 429 or 5xx), or names a sub-job its job
+doesn't have, is a failure.
 
 Download events add these body fields:
 
@@ -189,9 +244,13 @@ Two attributes carry Snowflake request IDs:
 | `snowflake.request_ids` | Recent Snowflake request IDs of the operation (up to 10, including retried attempts), newest last | Whenever any were seen |
 
 `snowflake.request_id` is a deprecated alias of `error.snowflake_request_id`,
-emitted for one release. Records use OTLP resource attributes
-`service.name = cortex-training` and
-`snowflake.account_host = <normalized connection hostname>`.
+emitted for one release. Records and metrics use OTLP resource attributes
+`service.name = cortex-training`,
+`snowflake.account_host = <normalized connection hostname>`, and
+`service.version = <this package's version>`. Records also carry
+`service.instance.id = <a random id per process>`, which groups one SDK
+script's, CLI command's or TUI session's records; metrics leave it out, so a
+process doesn't add series of its own.
 
 Applications can emit additional events through the same helper. They carry
 `client.surface` too, unless `attributes` gives one:
@@ -240,7 +299,7 @@ client, including notebooks, CI and containers that never open the TUI.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `create_job(sub_jobs, job_id=None, experiment_name=None, hardware=None)` | `job_id` | Validates each `SubJobConfig` client-side first. Only `training` and `sampling` sub-jobs can be submitted: a job takes zero or one `training` sub-job and any number of `sampling` sub-jobs. `hardware` is `H200`, `B200`, or `B300` (the `Hardware` enum or its string); omitted means `H200` |
+| `create_job(sub_jobs, job_id=None, experiment_name=None, hardware=None)` | `job_id` | Validates each `SubJobConfig` client-side first. Only `training` and `sampling` sub-jobs can be submitted: a job takes zero or one `training` sub-job and any number of `sampling` sub-jobs. `hardware` is `H200`, `B200`, or `B300` (the `Hardware` enum or its string); omitted means `H200`. Needs `USE CORTEX TRAINING` on the account; without it the call raises `requests.HTTPError` (403). See [REST API section 3.7](rest-api.md#37-access-control) |
 | `create_job_from_body(body)` | response dict | For callers that already hold the REST JSON. Enforces the same one-training-sub-job and no-`log_probability` rules before sending |
 | `get_job(job_id)` | job dict | Includes `sub_jobs` with their configs |
 | `list_jobs(status=None)` | list of jobs | Returns the inner list, not the envelope |
@@ -409,6 +468,24 @@ current role: it doesn't exist, or the role can't access it. It carries
 `.role` (the session's role, or None when it can't be determined, as for PAT
 clients), and `.statement`, the SQL that would set it up: `CREATE DATABASE IF NOT
 EXISTS ...` and `CREATE SCHEMA IF NOT EXISTS ...`, separated by `; `.
+
+When the service answers with a 4xx or 5xx, the `requests.exceptions.HTTPError`
+that `raise_for_status()` raises keeps the service's answer as `.response`, and
+the client adds to its message: the Snowflake request id first, when the answer
+has the `x-snowflake-request-id` header, and the JSON error body's `code` and
+`message` last, when it has them:
+
+```text
+[snowflake request id: <id>] 403 Client Error: Forbidden for url: <url> (<code>): <message>
+```
+
+With only one of them the message ends in ` (<code>)` or `: <message>`. The
+service's message is cut at 1,000 characters, ending in `...`, and common
+credential patterns in it are redacted. A body that is not JSON, or has neither,
+adds nothing at the end. The errors above keep their own messages, and the model
+deployment methods raise their own; see
+[REST API section 3.6](rest-api.md#36-errors) and
+[section 14.7](rest-api.md#147-errors).
 
 ## Details not covered here
 

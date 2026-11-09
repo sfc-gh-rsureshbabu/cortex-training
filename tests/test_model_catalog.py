@@ -197,6 +197,7 @@ def test_validation_dates_match_completed_live_smokes():
     }
 
     assert validated == {
+        ("Qwen/Qwen3-30B-A3B", "standard/h200-training-full"): "2026-11-05",
         ("Qwen/Qwen3-4B-Instruct-2507", "long/h200-inference-full"): "2026-10-14",
         ("Qwen/Qwen3-4B-Instruct-2507", "long/h200-training-full"): "2026-10-14",
         ("Qwen/Qwen3.5-4B", "standard/h200-training-full"): "2026-09-02",
@@ -204,9 +205,11 @@ def test_validation_dates_match_completed_live_smokes():
         ("Qwen/Qwen3.5-9B", "long/h200-inference-full"): "2026-10-14",
         ("Qwen/Qwen3.5-9B", "long/h200-training-full"): "2026-10-14",
         ("Qwen/Qwen3.6-35B-A3B", "standard/h200-training-full"): "2026-09-02",
-        ("Qwen/Qwen3.6-35B-A3B", "standard/h200-training-lora"): "2026-09-02",
+        ("Qwen/Qwen3.6-35B-A3B", "standard/h200-training-lora"): "2026-11-05",
         ("Qwen/Qwen3.8-27B", "long/h200-training-full"): "2026-09-02",
         ("Qwen/Qwen3.8-27B", "long/h200-training-lora"): "2026-09-02",
+        ("Qwen/Qwen3.8-Flash-Next", "long/h200-training-full"): "2026-11-05",
+        ("Qwen/Qwen3.8-Flash-Next", "long/h200-training-lora"): "2026-11-05",
         ("deepseek-ai/DeepSeek-V4.1-Flash-1017", "long/h200-training-full"): "2026-10-23",
         ("deepseek-ai/DeepSeek-V4.1-Flash-1017", "long/h200-training-lora"): "2026-10-26",
         ("deepseek-ai/DeepSeek-V4.1-Flash-1017", "standard/h200-training-full"): "2026-10-23",
@@ -242,20 +245,20 @@ def test_files_keep_their_source_sequence_lengths():
         ("Qwen/Qwen3-8B", "standard", "training"): 32768,
         ("Qwen/Qwen3.5-2B", "long", "inference"): 262144,
         ("Qwen/Qwen3.5-2B", "long", "training"): 262144,
-        ("Qwen/Qwen3.5-2B", "standard", "inference"): 32768,
-        ("Qwen/Qwen3.5-2B", "standard", "training"): 32768,
+        ("Qwen/Qwen3.5-2B", "standard", "inference"): 65536,
+        ("Qwen/Qwen3.5-2B", "standard", "training"): 65536,
         ("Qwen/Qwen3.5-4B", "long", "inference"): 262144,
         ("Qwen/Qwen3.5-4B", "long", "training"): 262144,
-        ("Qwen/Qwen3.5-4B", "standard", "inference"): 32768,
-        ("Qwen/Qwen3.5-4B", "standard", "training"): 32768,
+        ("Qwen/Qwen3.5-4B", "standard", "inference"): 65536,
+        ("Qwen/Qwen3.5-4B", "standard", "training"): 65536,
         ("Qwen/Qwen3.5-9B", "long", "inference"): 262144,
         ("Qwen/Qwen3.5-9B", "long", "training"): 262144,
         ("Qwen/Qwen3.5-9B", "standard", "inference"): 65536,
         ("Qwen/Qwen3.5-9B", "standard", "training"): 65536,
         ("Qwen/Qwen3.6-35B-A3B", "long", "inference"): 262144,
         ("Qwen/Qwen3.6-35B-A3B", "long", "training"): 262144,
-        ("Qwen/Qwen3.6-35B-A3B", "standard", "inference"): 32768,
-        ("Qwen/Qwen3.6-35B-A3B", "standard", "training"): 32768,
+        ("Qwen/Qwen3.6-35B-A3B", "standard", "inference"): 65536,
+        ("Qwen/Qwen3.6-35B-A3B", "standard", "training"): 65536,
         ("Qwen/Qwen3.8-27B", "long", "inference"): 262144,
         ("Qwen/Qwen3.8-27B", "long", "training"): 262144,
         ("Qwen/Qwen3.8-27B", "standard", "inference"): 65536,
@@ -470,7 +473,7 @@ def test_deepseek_v41_training_meshes_match_the_completed_h200_runs():
         "standard/h200-training-full": (32, 32, 8, 65536, 4),
         "standard/h200-training-lora": (8, 8, 8, 65536, 1),
         "long/h200-training-full": (32, 32, 32, 262144, 1),
-        "long/h200-training-lora": (16, 16, 16, 262144, 1),
+        "long/h200-training-lora": (32, 32, 32, 262144, 1),
     }
     for key, (n_gpus, ep_size, sp_size, seq_len, batch) in expected.items():
         sub_job, training, ds_config = _deepseek_training(model_id, key)
@@ -496,7 +499,7 @@ def test_deepseek_v41_training_meshes_match_the_completed_h200_runs():
         else:
             assert training["optimizer"]["lr"] == 2e-5
             assert "peft_config" not in training
-        if key == "standard/h200-training-lora":
+        if key.endswith("training-lora"):
             assert "offload_optimizer" not in ds_config["zero_optimization"]
         else:
             assert ds_config["zero_optimization"]["offload_optimizer"]["device"] == "cpu"
@@ -818,12 +821,12 @@ def test_sequence_parallel_size_must_divide_the_gpu_count(catalog):
 def test_long_context_must_be_longer_than_standard(catalog):
     _edit_config(
         catalog / "qwen3.6-35b-a3b/long/h200-inference-full.json",
-        lambda config: config.update(max_seq_len=32768),
+        lambda config: config.update(max_seq_len=65536),
     )
 
     _invalid(
         catalog,
-        r"long-context files need a larger max_seq_len than standard ones \(long 32768 <= standard 32768\)",
+        r"long-context files need a larger max_seq_len than standard ones \(long 65536 <= standard 65536\)",
     )
 
 

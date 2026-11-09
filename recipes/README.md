@@ -14,6 +14,8 @@ type on the command line instead of writing a job file.
 | [Model deployment streaming](model_deployment/README.md) | OpenAI-compatible model deployment, streamed chat | Open weights, checkpoints |
 | [DFlash2 draft](dflash2/README.md) | Speculative-decoding draft training, then serving with the target | Target-written chats (UltraChat prompts) |
 | [SkyRL GRPO](skyrl/gsm8k_grpo/README.md) | SkyRL trainer on CPU driver + Cortex training/sampling sub-jobs | GSM8K |
+| [TRL GRPO](trl/gsm8k_grpo/README.md) | TRL trainer on CPU driver + Cortex training/sampling sub-jobs | GSM8K |
+| [prime-rl GRPO](prime-rl/README.md) | prime-rl orchestrator on a CPU driver + Cortex training/sampling sub-jobs | i3_math (math), r2e-gym (SWE) |
 | [Tinker Cookbook](tinker/README.md) | Run `tinker-cookbook` recipes or `ServiceClient` on Cortex | GSM8K, MATH, etc. |
 | [Harbor RL](harbor/README.md) | Go from `harbor run` evals to RL on the same tasks, sandbox and verifier | Your Harbor tasks (example: SWE-smith code localization) |
 | [OpenHands RL](openhands/README.md) | Train an OpenHands agent with online GSPO | SWE-smith code localization |
@@ -31,6 +33,8 @@ recipes/
 ├── model_deployment/        # deploy.py, streaming.py, configs/
 ├── api_quickstart/          # raw REST API request bodies
 ├── skyrl/                   # SkyRL GRPO recipe
+├── trl/                     # TRL GSM8K GRPO recipe
+├── prime-rl/                # prime-rl GRPO integration
 ├── tinker/                  # tinker-cookbook integration
 ├── harbor/                  # RL post-training on Harbor tasks, from harbor run evals
 ├── openhands/               # OpenHands agent RL post-training
@@ -47,12 +51,8 @@ uv pip install 'tinker-cookbook[math-rl] @ git+https://github.com/thinking-machi
 uv pip install chromadb  # distillation only: the wiki-search title index
 ```
 
-Set up a Snowflake connection profile (see
-[Set up the client](../docs/getting-started/setup.md)). A
-[JSON connection file](../docs/getting-started/setup.md#json-connection-file)
-(from [`connection.json.template`](../docs/getting-started/connection.json.template),
-with account host and PAT) also works, through `config=`, but it's deprecated: each run warns,
-and it stops working in a future release.
+Set up a Snowflake connection profile with `cortex-training login` (see
+[Set up the client](../docs/getting-started/setup.md)).
 To log metrics to Weights & Biases or Snowflake, see
 [experiment tracking](../docs/guides/operations/wandb.md).
 
@@ -60,29 +60,28 @@ To log metrics to Weights & Biases or Snowflake, see
 
 ```bash
 # With no connection argument, the profile `cortex-training login` saved is used.
-# Add connection=<profile> to choose another (config=<file> still works, deprecated).
+# Add connection=<profile> to choose another.
 python -m recipes.sft_quickstart.conversational.train
 python -m recipes.rl_quickstart.math_grpo.train
 python -m recipes.distillation.on_policy.train
 python -m recipes.inference.serve
-python -m recipes.model_deployment.deploy config=/path/to/config.json   # needs a PAT; not deprecated here
+python -m recipes.model_deployment.deploy       # needs a profile that signs in with a PAT
 ```
 
 Every recipe resolves its connection the same way the CLI does:
 
-- `connection=<name>` uses a profile from `~/.snowflake/connections.toml`
-  (`$SNOWFLAKE_HOME/connections.toml` if `SNOWFLAKE_HOME` is set).
-- `config=<file>` reads a legacy JSON file with `host`, `pat`, `database`, and
-  `schema`, exactly as before: only the file is used, and environment variables,
-  the saved login and profiles are ignored. Deprecated: it warns.
-- With neither, the old sources still come first, each with a deprecation
-  warning: `CORTEX_TRAINING_CONNECTION`, `CORTEX_TRAINING_CONFIG`, complete
-  credentials in the environment, and `login.json` (from the old
-  `cortex-training login FILE`). Otherwise the profile `cortex-training login`
-  saved is used, then the Snowflake default connection profile.
+- `connection=<name>` uses a profile from `connections.toml` in your Snowflake
+  folder, usually `~/.snowflake/` (see
+  [the Snowflake folder](../docs/getting-started/authentication.md#the-snowflake-folder)).
+- With no `connection=`, the profile `cortex-training login` saved is used, then
+  the Snowflake default connection profile.
+- The [older connection methods](../docs/reference/cli.md#older-connection-methods),
+  such as `config=<file>`, still work as a fallback and will be deprecated in a
+  future release.
 
 Each run logs the target it connected to and the source, never the token. The
-`model_deployment` recipe needs a PAT (see its README).
+`model_deployment` recipe needs a profile that signs in with a programmatic
+access token (see its README).
 
 `config=` and `connection=` only choose the connection, never a job body. The SFT, RL and
 inference recipes pick their job with these arguments (distillation uses

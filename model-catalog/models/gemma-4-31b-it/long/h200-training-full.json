@@ -8,9 +8,9 @@
       "seed": 42,
       "training_config": {
         "n_gpus": 16,
-        "sp_size": 8,
+        "sp_size": 16,
         "max_seq_len": 262144,
-        "train_batch_size": 2,
+        "train_batch_size": 1,
         "gradient_clipping": 1.0,
         "model_provider": "huggingface",
         "attn_implementation": "sdpa",
@@ -31,7 +31,9 @@
             "stage": 2
           },
           "bf16": {
-            "enabled": true
+            "enabled": true,
+            "bf16_master_weights_and_grads": true,
+            "bf16_optimizer_states": true
           }
         }
       }
