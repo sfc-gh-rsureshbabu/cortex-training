@@ -25,6 +25,13 @@ The reference documents in this repository are the contract to code against:
   update it in the same change as the client whenever the wire behavior moves.
 - `docs/reference/cli.md` — commands, flags, configuration, environment vars.
 
+## Troubleshooting a user's setup
+
+When someone's `cortex-training` setup or connection fails (login, profiles,
+which account or role is used, a 403, a refused privilege), read the agent
+skill in `src/cortex_training/skills/cortex-training-setup/` first: `SKILL.md`,
+then `troubleshooting.md` for specific errors.
+
 ## House rules
 
 - **Never commit account identifiers, hostnames, PATs, request IDs, or job
@@ -39,6 +46,9 @@ The reference documents in this repository are the contract to code against:
   frames.
 - Assertions on serialized payloads should decode them (`wire.loads`) rather
   than only checking `isinstance(payload, bytes)`, which any encoding satisfies.
+- When CLI commands, their output, or their error messages change, update the
+  agent skill in `src/cortex_training/skills/` that describes them
+  (`tests/test_skills.py` checks its commands still parse).
 - When you change a default, a flag, or a field, update the docs that quote it in
   the same change: `docs/reference/cli.md`, `docs/reference/rest-api.md`, and the
   example READMEs plus `example.yaml`.
