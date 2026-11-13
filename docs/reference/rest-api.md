@@ -3821,7 +3821,8 @@ The spec becomes a `POST /` body with `idle_timeout_seconds: 0`, top-level
 `inference_config.{deployment_class, num_replicas, n_gpus, max_seq_len}`,
 `inference_config.vllm_config.{tensor_parallel_size, max_model_len}`, and
 `source_checkpoint_info: {source_job_id, checkpoint_id}` for a checkpoint
-source, or `source_checkpoint_info: {external_stage_path}` for an external one. `n_gpus` is `min_replicas * gpus_per_replica`.
+source, or `source_checkpoint_info: {external_stage_path}` for an external one.
+`n_gpus` is `min_replicas * gpus_per_replica`.
 
 ### 14.3 Statuses
 
