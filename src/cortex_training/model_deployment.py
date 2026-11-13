@@ -48,15 +48,17 @@ DEPLOYMENT_CLASS = "class"
 DEPLOYMENT_MIN_REPLICAS = "min_replicas"
 DEPLOYMENT_GPUS_PER_REPLICA = "gpus_per_replica"
 DEPLOYMENT_GPU_TYPE = "gpu_type"
-# Keys inside spec.source, and its two source types. A checkpoint source names
-# no model: the server already knows the source job's model, so the client
-# reads it.
+# Keys inside spec.source, and its source types. A checkpoint source names no
+# model: the server already knows the source job's model, so the client reads
+# it. An external source names the base model its weights were trained from.
 SOURCE_TYPE = "type"
 SOURCE_MODEL = "model"
 SOURCE_JOB_ID = "job_id"
 SOURCE_CHECKPOINT_ID = "checkpoint_id"
+SOURCE_STAGE_PATH = "stage_path"
 SOURCE_TYPE_BASE_MODEL = "base_model"
 SOURCE_TYPE_CHECKPOINT = "checkpoint"
+SOURCE_TYPE_EXTERNAL = "external"
 # Keys inside spec.inference.
 INFERENCE_MAX_SEQ_LEN = "max_seq_len"
 # Keys of the sampling sub-job the server stores for a deployment.
@@ -69,6 +71,8 @@ WIRE_MAX_MODEL_LEN = "max_model_len"
 WIRE_SOURCE_CHECKPOINT_INFO = "source_checkpoint_info"
 WIRE_SOURCE_JOB_ID = "source_job_id"
 WIRE_CHECKPOINT_ID = "checkpoint_id"
+WIRE_EXTERNAL_STAGE_PATH = "external_stage_path"
+WIRE_IS_EXTERNAL = "is_external"
 WIRE_DEPLOYMENT_CLASS = "deployment_class"
 WIRE_MAX_SEQ_LEN = "max_seq_len"
 # Customer-facing deployment statuses.
@@ -214,6 +218,7 @@ class ModelDeploymentSpec:
     gpu_type: str = "H200"
     source_job_id: str | None = None
     checkpoint_id: str | None = None
+    stage_path: str | None = None
     deployment_class: str = MODEL_DEPLOYMENT_CLASS
 
     @classmethod
@@ -252,6 +257,7 @@ class ModelDeploymentSpec:
                 SOURCE_MODEL,
                 SOURCE_JOB_ID,
                 SOURCE_CHECKPOINT_ID,
+                SOURCE_STAGE_PATH,
             },
         )
         source_type = source[SOURCE_TYPE]
@@ -271,10 +277,18 @@ class ModelDeploymentSpec:
             string_fields = {
                 key: source[key] for key in (SOURCE_JOB_ID, SOURCE_CHECKPOINT_ID)
             }
+        elif source_type == SOURCE_TYPE_EXTERNAL:
+            _strict_object(
+                source,
+                location=SPEC_SOURCE,
+                required={SOURCE_TYPE, SOURCE_MODEL, SOURCE_STAGE_PATH},
+            )
+            string_fields = {key: source[key] for key in (SOURCE_MODEL, SOURCE_STAGE_PATH)}
         else:
             raise ValueError(
-                f"{SPEC_SOURCE}.{SOURCE_TYPE} must be either "
-                f"'{SOURCE_TYPE_BASE_MODEL}' or '{SOURCE_TYPE_CHECKPOINT}'"
+                f"{SPEC_SOURCE}.{SOURCE_TYPE} must be one of "
+                f"'{SOURCE_TYPE_BASE_MODEL}', '{SOURCE_TYPE_CHECKPOINT}', or "
+                f"'{SOURCE_TYPE_EXTERNAL}'"
             )
         # Every source field must be a non-empty string; the error names the field.
         for key, field_value in string_fields.items():
@@ -284,6 +298,7 @@ class ModelDeploymentSpec:
         model_name = string_fields.get(SOURCE_MODEL)
         source_job_id = string_fields.get(SOURCE_JOB_ID)
         checkpoint_id = string_fields.get(SOURCE_CHECKPOINT_ID)
+        stage_path = string_fields.get(SOURCE_STAGE_PATH)
         # Which models can be deployed (and how many GPUs each needs) is left to
         # the server, as for ordinary sampling jobs, so new models need no
         # client release.
@@ -347,6 +362,7 @@ class ModelDeploymentSpec:
             gpu_type=gpu_type,
             source_job_id=source_job_id,
             checkpoint_id=checkpoint_id,
+            stage_path=stage_path,
             deployment_class=deployment_class,
         )
 
@@ -368,6 +384,12 @@ class ModelDeploymentSpec:
                 SOURCE_JOB_ID: self.source_job_id,
                 SOURCE_CHECKPOINT_ID: self.checkpoint_id,
             }
+        if self.source_type == SOURCE_TYPE_EXTERNAL:
+            return {
+                SOURCE_TYPE: SOURCE_TYPE_EXTERNAL,
+                SOURCE_MODEL: self.model_name,
+                SOURCE_STAGE_PATH: self.stage_path,
+            }
         return {SOURCE_TYPE: self.source_type, SOURCE_MODEL: self.model_name}
 
     def to_public_spec(self) -> dict[str, Any]:
@@ -382,6 +404,16 @@ class ModelDeploymentSpec:
             SPEC_SOURCE: self.source_to_wire(),
             SPEC_INFERENCE: {INFERENCE_MAX_SEQ_LEN: self.max_seq_len},
         }
+
+    def _source_checkpoint_info(self) -> dict[str, Any] | None:
+        if self.source_type == SOURCE_TYPE_CHECKPOINT:
+            return {
+                WIRE_SOURCE_JOB_ID: self.source_job_id,
+                WIRE_CHECKPOINT_ID: self.checkpoint_id,
+            }
+        if self.source_type == SOURCE_TYPE_EXTERNAL:
+            return {WIRE_EXTERNAL_STAGE_PATH: self.stage_path}
+        return None
 
     def _to_create_job_body(self) -> dict[str, Any]:
         """Build the single-sampling-job CreateJob request body for a deployment."""
@@ -405,14 +437,7 @@ class ModelDeploymentSpec:
                     WIRE_MAX_MODEL_LEN: self.max_seq_len,
                 },
             },
-            source_checkpoint_info=(
-                {
-                    WIRE_SOURCE_JOB_ID: self.source_job_id,
-                    WIRE_CHECKPOINT_ID: self.checkpoint_id,
-                }
-                if self.source_type == SOURCE_TYPE_CHECKPOINT
-                else None
-            ),
+            source_checkpoint_info=self._source_checkpoint_info(),
         )
         sub_job.validate()
         return {

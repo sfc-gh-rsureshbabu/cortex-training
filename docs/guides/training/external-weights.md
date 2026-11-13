@@ -2,7 +2,9 @@
 
 Use an external-weight import (also called a BYO checkpoint) when you have a
 complete Hugging Face model directory that was produced outside Cortex Training
-and want to use its weights for a new training or sampling job.
+and want to use its weights for a new training or sampling job. To serve the
+weights from a model deployment instead, see
+[Deploy a Model](../inference/deploy-model.md).
 
 This initializes model weights; it does not restore an optimizer, scheduler, or
 training step. A training job starts with a fresh optimizer. External-weight

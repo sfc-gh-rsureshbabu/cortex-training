@@ -1076,7 +1076,9 @@ cortex-training model-deployment create \
 customer-supplied stage credentials are not accepted. A checkpoint source
 names only `job_id` and `checkpoint_id`; the model is read from the source
 job. Base-model sources use `{"type": "base_model", "model": "Qwen/Qwen3-1.7B"}`
-instead. The `deployment` object sets `class` (only `EVALUATION` is supported
+instead, and weights imported from a stage use
+`{"type": "external", "model": ..., "stage_path": "@DB.SCHEMA.STAGE/path"}`;
+`list` and `describe` report an external source without its `stage_path`. The `deployment` object sets `class` (only `EVALUATION` is supported
 today), `min_replicas`, `gpus_per_replica` (1, 2, 4, or 8), and `gpu_type`
 (`H200`, `B200`, or `B300`, in any case); `min_replicas * gpus_per_replica`
 must be at most 8 or a multiple of 8. `create --help` shows a full example
