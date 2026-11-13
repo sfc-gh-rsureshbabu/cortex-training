@@ -263,9 +263,13 @@ def test_create_reports_an_external_source_as_reads_do():
     instance._session = MagicMock()
     instance._session.post.return_value = response
 
-    metadata = instance.create_model_deployment(external_spec())
+    created = instance.create_model_deployment(external_spec())
 
-    assert metadata["model_source"] == {"type": "external", "model": "Qwen/Qwen3-8B"}
+    job = marked_job()
+    job["sub_jobs"][0]["model_name"] = "Qwen/Qwen3-8B"
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": True}
+    read = client_module._model_deployment_metadata(job, DEPLOYMENT_ID)
+    assert created["model_source"] == read["model_source"]
 
 
 def test_external_spec_rejects_checkpoint_identity():
@@ -297,7 +301,7 @@ def test_create_external_deployment_posts_without_reading_a_source_job():
 
 def test_metadata_reports_an_external_source_by_its_base_model():
     job = marked_job()
-    job["sub_jobs"][0]["source_checkpoint_info"] = {"is_external": True}
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": True}
 
     metadata = client_module._model_deployment_metadata(
         job, DEPLOYMENT_ID, base_url="https://account/api/inference/v1"

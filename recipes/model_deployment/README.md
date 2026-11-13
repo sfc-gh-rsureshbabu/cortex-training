@@ -69,8 +69,13 @@ A checkpoint spec names no model; the client reads it from the training job.
 
 From weights trained elsewhere, upload them to a stage as described in
 [Start a Job From Your Own Weights](../../docs/guides/training/external-weights.md),
-copy `configs/external.json`, and fill in `model` (the base model the weights
-were trained from) and `stage_path`.
+copy `configs/external.json`, fill in `model` (the base model the weights
+were trained from) and `stage_path`, and pass it as `spec=`:
+
+```bash
+python -m recipes.model_deployment.deploy \
+  spec=/path/to/external.json
+```
 
 ## Expected output
 
@@ -152,9 +157,6 @@ for every rule.
 - **Waiting times out or is interrupted.** The example still drops a deployment
   it created. With `keep_deployment=True`, or after the process is killed, run
   `cortex-training model-deployment list` and `drop` what is left.
-- **A checkpoint or external source is shown as `base_model`.** The server
-  did not echo the source
-  ([known limitation 5](../../docs/reference/rest-api.md#15-known-limitations)).
 
 `last_validated` in `example.yaml` is the date of the last end-to-end run
 against a live account, with the default spec. The live checks of the endpoint

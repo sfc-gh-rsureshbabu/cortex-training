@@ -1060,8 +1060,8 @@ spec format, statuses, drop and download behavior, and errors.
 `--database`, `--schema`, and `--compact` may be given either before
 `model-deployment` or after its subcommand.
 
-Create a deployment from a base model or a completed Cortex Training
-`weights-only` checkpoint:
+Create a deployment from a base model, a completed Cortex Training
+`weights-only` checkpoint, or weights imported from a stage:
 
 ```bash
 cortex-training model-deployment create \
@@ -1078,7 +1078,8 @@ names only `job_id` and `checkpoint_id`; the model is read from the source
 job. Base-model sources use `{"type": "base_model", "model": "Qwen/Qwen3-1.7B"}`
 instead, and weights imported from a stage use
 `{"type": "external", "model": ..., "stage_path": "@DB.SCHEMA.STAGE/path"}`;
-`list` and `describe` report an external source without its `stage_path`. The `deployment` object sets `class` (only `EVALUATION` is supported
+`list` and `describe` report an external source without its `stage_path`.
+The `deployment` object sets `class` (only `EVALUATION` is supported
 today), `min_replicas`, `gpus_per_replica` (1, 2, 4, or 8), and `gpu_type`
 (`H200`, `B200`, or `B300`, in any case); `min_replicas * gpus_per_replica`
 must be at most 8 or a multiple of 8. `create --help` shows a full example
@@ -1185,7 +1186,7 @@ events; see [Deploy a Model for Streaming Inference](../guides/inference/deploy-
 
 Use `cortex-training model-deployment list` to find deployments: `GET
 $BASE_URL/models` can return an empty list while a deployment is `READY`
-([known limitation 6](rest-api.md#15-known-limitations)). The full request and
+([known limitation 5](rest-api.md#15-known-limitations)). The full request and
 response behavior is in
 [REST API reference section 14.8](rest-api.md#148-calling-a-deployment).
 

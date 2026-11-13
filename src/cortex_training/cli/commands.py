@@ -822,7 +822,7 @@ def build_parser(
 
     deployment_create = deployment_commands.add_parser(
         "create",
-        help="Create an evaluation deployment from a base model or checkpoint.",
+        help="Create an evaluation deployment from a base model, checkpoint, or imported weights.",
         description=(
             "Create an evaluation deployment. Checkpoint sources must name a "
             "completed Cortex Training weights-only checkpoint."

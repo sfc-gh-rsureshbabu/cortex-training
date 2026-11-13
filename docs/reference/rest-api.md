@@ -3788,9 +3788,10 @@ An external source is `{"type": "external", "model": ..., "stage_path": ...}`.
 `stage_path` names weights uploaded to a stage, under the same rules as
 `external_stage_path` on a job ([section 5.1](#51-create-job---post-)), and
 `model` is the base model they were trained from. The role needs `READ` on the
-stage. `create` sends `model` as the sub-job's `model_name`. The stage
-credentials last 12 hours, so a deployment that waits longer than that for
-GPUs fails when it downloads the weights.
+stage. `create` sends `model` as the sub-job's `model_name`. Only `EVALUATION`
+deployments accept an external source. The stage credentials last at most 12
+hours, so a deployment that waits longer than that for GPUs fails with
+`checkpoint_download_failed` when it downloads the weights.
 
 The checkpoint can come from a full fine-tune or a LoRA training job. For a
 LoRA checkpoint, the server copies the source training sub-job's
@@ -3894,9 +3895,9 @@ Missing metadata is reported, not guessed:
   server returns no `hardware`, e.g. for a job read while the server cannot
   reach its scheduler.
 - The source is `checkpoint` or `external` only when the sub-job carries
-  `source_checkpoint_info` (see [section 15](#15-known-limitations), item 5).
-  An external source is reported as `{"type": "external", "model": ...}`: the
-  server never returns its stage path, so neither `create` nor the reads do.
+  `source_checkpoint_info`. An external source is reported as
+  `{"type": "external", "model": ...}`: the server never returns its stage
+  path, so neither `create` nor the reads do.
 
 ### 14.5 Dropping
 
@@ -4002,7 +4003,7 @@ change it. The example treats a chunk with an `error` key, a `data` line that
 is not JSON, or a stream that ends without `[DONE]` as a failed call.
 
 `GET {base_url}/models` is meant to list the `READY` deployments the caller
-owns in the schema, but see [section 15](#15-known-limitations), item 6.
+owns in the schema, but see [section 15](#15-known-limitations), item 5.
 
 ---
 
@@ -4020,12 +4021,7 @@ These are current gaps, not supported API behavior:
 4. Generate prompt validation resolves `max_seq_len` from the first sub-job
    carrying an `inference_config` rather than matching `job_type="sampling"`. A
    `log_probability` sub-job listed first therefore supplies the wrong window.
-5. A server that does not echo `source_checkpoint_info` when a job is read
-   back reports a checkpoint or external model deployment with a `base_model`
-   source in `list_model_deployments`,
-   `describe_model_deployment`, and `wait_for_model_deployment`
-   ([section 14.4](#144-reading-deployments)).
-6. `GET {base_url}/models` has been seen to return HTTP 200 with an empty
+5. `GET {base_url}/models` has been seen to return HTTP 200 with an empty
    `data` list while a `READY` deployment in the same schema served chat
    completions ([section 14.8](#148-calling-a-deployment)). Use
    `list_model_deployments` or `cortex-training model-deployment list` to find

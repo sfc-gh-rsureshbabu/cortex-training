@@ -172,6 +172,11 @@ JOB_STATUS_TO_DEPLOYMENT_STATUS = {
 }
 
 
+def external_source_read_view(model_name: str | None) -> dict[str, Any]:
+    """An external source as the server reports it: the stage path is never returned."""
+    return {SOURCE_TYPE: SOURCE_TYPE_EXTERNAL, SOURCE_MODEL: model_name}
+
+
 def _strict_object(
     value: Any,
     *,
@@ -391,6 +396,12 @@ class ModelDeploymentSpec:
                 SOURCE_STAGE_PATH: self.stage_path,
             }
         return {SOURCE_TYPE: self.source_type, SOURCE_MODEL: self.model_name}
+
+    def source_read_view(self) -> dict[str, Any]:
+        """Return the source as reads report it: an external source without its stage path."""
+        if self.source_type == SOURCE_TYPE_EXTERNAL:
+            return external_source_read_view(self.model_name)
+        return self.source_to_wire()
 
     def to_public_spec(self) -> dict[str, Any]:
         """Return the spec as deployment JSON, in the same shape ``from_dict`` accepts."""

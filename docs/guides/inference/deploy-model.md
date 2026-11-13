@@ -37,9 +37,12 @@ using the LoRA settings of the training job.
 ```
 
 From weights you trained elsewhere, upload them to a stage as described in
-[Train from External Weights](../training/external-weights.md) and name the
-base model they were trained from. The same upload rules apply: a full,
-merged Hugging Face safetensors directory whose structure matches `model`.
+[Start a Job From Your Own Weights](../training/external-weights.md) and name
+the base model they were trained from. The same upload rules apply: a full,
+merged Hugging Face safetensors directory whose structure matches `model`. Your
+role needs `READ` on the stage, and the weights must be downloaded within 12
+hours of `create`: a deployment that waits longer for GPUs fails with
+`checkpoint_download_failed`.
 
 ```json
 "source": {"type": "external", "model": "Qwen/Qwen3-8B", "stage_path": "@MY_DB.MY_SCHEMA.MODEL_IMPORT/qwen-sft-run7"}
