@@ -252,7 +252,7 @@ def test_tc6_base_url_serves_openai_chat_completions(ready_deployment):
 
 @pytest.mark.xfail(
     reason="GET /models has returned an empty data list for a READY deployment; "
-    "see docs/reference/rest-api.md section 15, item 6",
+    "see docs/reference/rest-api.md section 15, item 5",
     strict=False,
 )
 def test_tc6_models_lists_the_ready_deployment(ready_deployment):
@@ -473,35 +473,6 @@ def test_tc8_missing_checkpoint_is_rejected(
     )
 
 
-@pytest.mark.skipif(
-    not os.environ.get(EXTERNAL_ENV), reason=f"set {EXTERNAL_ENV} to deploy imported weights"
-)
-def test_tc12_external_deployment_serves_and_reports_its_source(created, spec_dir):
-    model, stage_path, gpus = os.environ[EXTERNAL_ENV].split("|")
-    spec = {
-        **base_spec(gpus_per_replica=int(gpus)),
-        "source": {"type": "external", "model": model, "stage_path": stage_path},
-    }
-    result = run_cli(
-        "model-deployment", "create",
-        "--spec", write_spec(spec_dir, "spec-external.json", spec), "--wait",
-        "--timeout", str(READY_TIMEOUT_SECONDS),
-    )
-    summary = json.loads(result.stdout) if result.stdout.strip() else {}
-    if summary.get("deployment"):
-        created.append(summary["deployment"])
-    assert result.returncode == 0, result.stderr
-    assert summary["status"] == "READY"
-
-    described = run_ok("model-deployment", "describe", summary["deployment"])
-    assert described["spec"]["source"] == {"type": "external", "model": model}
-    listed = run_ok("model-deployment", "list")["deployments"]
-    assert summary["deployment"] in {entry["deployment"] for entry in listed}
-
-    dropped = run_ok("model-deployment", "drop", summary["deployment"])
-    assert dropped == {"deployment": summary["deployment"], "dropped": True}
-
-
 def test_tc9_drop_releases_the_deployment_and_can_be_repeated(ready_deployment):
     deployment_id = ready_deployment["deployment"]
     first = run_ok("model-deployment", "drop", deployment_id)
@@ -604,3 +575,50 @@ def test_tc11_interrupt_and_timeout_leave_the_deployment_running(created, spec_d
 
     dropped = run_ok("model-deployment", "drop", deployment_id)
     assert dropped == {"deployment": deployment_id, "dropped": True}
+
+
+@pytest.mark.skipif(
+    not os.environ.get(EXTERNAL_ENV), reason=f"set {EXTERNAL_ENV} to deploy imported weights"
+)
+def test_tc12_external_deployment_serves_and_reports_its_source(created, spec_dir):
+    model, stage_path, gpus = os.environ[EXTERNAL_ENV].split("|")
+    spec = {
+        **base_spec(gpus_per_replica=int(gpus)),
+        "source": {"type": "external", "model": model, "stage_path": stage_path},
+    }
+    result = run_cli(
+        "model-deployment", "create",
+        "--spec", write_spec(spec_dir, "spec-external.json", spec), "--wait",
+        "--timeout", str(READY_TIMEOUT_SECONDS),
+    )
+    summary = json.loads(result.stdout) if result.stdout.strip() else {}
+    if summary.get("deployment"):
+        created.append(summary["deployment"])
+    assert result.returncode == 0, result.stderr
+    assert summary["status"] == "READY"
+
+    config = load_config()
+    pat = config.get("pat") or os.environ.get("CORTEX_TRAINING_PAT")
+    if pat:
+        response = requests.post(
+            f"{summary['base_url']}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {pat}",
+                "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+            },
+            json={
+                "model": summary["deployment"],
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            timeout=300,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["choices"][0]["message"]["content"]
+
+    described = run_ok("model-deployment", "describe", summary["deployment"])
+    assert described["spec"]["source"] == {"type": "external", "model": model}
+    listed = run_ok("model-deployment", "list")["deployments"]
+    assert summary["deployment"] in {entry["deployment"] for entry in listed}
+
+    dropped = run_ok("model-deployment", "drop", summary["deployment"])
+    assert dropped == {"deployment": summary["deployment"], "dropped": True}
