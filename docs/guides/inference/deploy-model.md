@@ -40,9 +40,11 @@ From weights you trained elsewhere, upload them to a stage as described in
 [Start a Job From Your Own Weights](../training/external-weights.md) and name
 the base model they were trained from. The same upload rules apply: a full,
 merged Hugging Face safetensors directory whose structure matches `model`. Your
-role needs `READ` on the stage, and the weights must be downloaded within 12
-hours of `create`: a deployment that waits longer for GPUs fails with
-`checkpoint_download_failed`.
+role needs `READ` on the stage. The stage is read only once GPUs are assigned,
+so a mistyped path, or a deployment that waits more than 12 hours for GPUs,
+ends `FAILED` with `failure.code` `sub_job_failed` ("could not download its
+source checkpoint") rather than failing at `create`. Run `LIST` on the exact
+path first.
 
 ```json
 "source": {"type": "external", "model": "Qwen/Qwen3-8B", "stage_path": "@MY_DB.MY_SCHEMA.MODEL_IMPORT/qwen-sft-run7"}

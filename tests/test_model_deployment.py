@@ -267,7 +267,7 @@ def test_create_reports_an_external_source_as_reads_do():
 
     job = marked_job()
     job["sub_jobs"][0]["model_name"] = "Qwen/Qwen3-8B"
-    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": True}
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"is_external": True}
     read = client_module._model_deployment_metadata(job, DEPLOYMENT_ID)
     assert created["model_source"] == read["model_source"]
 
@@ -282,7 +282,7 @@ def test_a_source_that_is_not_marked_external_needs_a_checkpoint_identity():
 
 def test_describe_reports_an_external_source_in_its_spec():
     job = marked_job()
-    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": True}
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"is_external": True}
 
     metadata = client_module._model_deployment_metadata(job, DEPLOYMENT_ID)
     described = client_module._model_deployment_description(metadata, database="DB", schema="S")
@@ -319,7 +319,7 @@ def test_create_external_deployment_posts_without_reading_a_source_job():
 
 def test_metadata_reports_an_external_source_by_its_base_model():
     job = marked_job()
-    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": True}
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"is_external": True}
 
     metadata = client_module._model_deployment_metadata(
         job, DEPLOYMENT_ID, base_url="https://account/api/inference/v1"

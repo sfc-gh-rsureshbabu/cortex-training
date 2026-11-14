@@ -605,7 +605,7 @@ services that don't report it, and for model deployments, the entry is the
 config as submitted, and its whole numbers may come back as floats
 (`"n_gpus": 4.0`). The one exception is an `external_stage_path` source: it
 comes back as `source_checkpoint_info: {"is_external": true}`, without the path
-(section 8.4).
+([section 8.4](#84-source_checkpoint_info)).
 
 The record also has `hardware` (the default when none was set), `comment`
 (`null` when none was set), and `idle_timeout_seconds` /
@@ -2562,9 +2562,6 @@ Exactly one source is required:
 - `checkpoint_id` identifies a checkpoint saved by Cortex Training.
   `source_job_id` identifies the job that owns it and is required for cross-job
   initialization.
-- On reads, an `external_stage_path` source comes back as
-  `{"is_external": true}` (with an empty `checkpoint_id` if present); the stage
-  path is never returned.
 - `external_stage_path` identifies a complete Hugging Face safetensors
   directory in a stage the submitting role can read. It cannot be combined with
   `checkpoint_id` or `source_job_id`.
@@ -2577,6 +2574,10 @@ Exactly one source is required:
 
 The typed client forwards this object without validating its fields. The server
 resolves stage credentials; clients must not provide `stage_info` themselves.
+
+On reads, an `external_stage_path` source comes back as
+`{"is_external": true}`; the stage path is never returned. That is a read-only
+shape: `create` rejects `is_external`.
 
 ### 8.5 Memory-diagnostics settings
 
@@ -3801,9 +3802,11 @@ under the same rules as `external_stage_path` on a job
 ([section 5.1](#51-create-job---post-)); a checkpoint saved by Cortex Training
 uses a `checkpoint` source instead. `model` is the base model the weights were
 trained from, and `create` sends it as the sub-job's `model_name`. The role
-needs `READ` on the stage. The stage credentials last at most 12 hours, so a
-deployment that waits longer than that for GPUs fails with
-`checkpoint_download_failed` when it downloads the weights.
+needs `READ` on the stage. The stage is read once GPUs are assigned, so a wrong
+path, or stage credentials that expired (they last at most 12 hours, as for a
+job import), shows up as a `FAILED` deployment with `failure.code`
+`sub_job_failed` and a message that the sub-job could not download its source
+checkpoint, not as a `create` error.
 
 Client-side checks (all others are left to the server):
 

@@ -248,3 +248,5 @@ for any other job.
   an existing stage is only read once GPUs are assigned, so a mistyped path
   makes the job fail during initialization rather than at submission. Run
   `LIST` on the exact path before submitting.
+- The stage read credentials last at most 12 hours from submission, so a job
+  that waits longer than that for GPUs also fails during initialization.
