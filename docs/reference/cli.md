@@ -1078,7 +1078,8 @@ names only `job_id` and `checkpoint_id`; the model is read from the source
 job. Base-model sources use `{"type": "base_model", "model": "Qwen/Qwen3-1.7B"}`
 instead, and weights imported from a stage use
 `{"type": "external", "model": ..., "stage_path": "@DB.SCHEMA.STAGE/path"}`;
-`list` and `describe` report an external source without its `stage_path`.
+`describe` reports an external source without its `stage_path`, while
+`create --dry-run` prints the spec as given.
 The `deployment` object sets `class` (only `EVALUATION` is supported
 today), `min_replicas`, `gpus_per_replica` (1, 2, 4, or 8), and `gpu_type`
 (`H200`, `B200`, or `B300`, in any case); `min_replicas * gpus_per_replica`

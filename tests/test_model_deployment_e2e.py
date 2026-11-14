@@ -581,7 +581,11 @@ def test_tc11_interrupt_and_timeout_leave_the_deployment_running(created, spec_d
     not os.environ.get(EXTERNAL_ENV), reason=f"set {EXTERNAL_ENV} to deploy imported weights"
 )
 def test_tc12_external_deployment_serves_and_reports_its_source(created, spec_dir):
-    model, stage_path, gpus = os.environ[EXTERNAL_ENV].split("|")
+    parts = os.environ[EXTERNAL_ENV].split("|")
+    assert len(parts) == 3, f"{EXTERNAL_ENV} must be MODEL|@DB.SCHEMA.STAGE/path|GPUS_PER_REPLICA"
+    model, stage_path, gpus = parts
+    # Resolved before create, so a missing PAT skips without holding GPUs.
+    pat = deployment_pat()
     spec = {
         **base_spec(gpus_per_replica=int(gpus)),
         "source": {"type": "external", "model": model, "stage_path": stage_path},
@@ -597,23 +601,17 @@ def test_tc12_external_deployment_serves_and_reports_its_source(created, spec_di
     assert result.returncode == 0, result.stderr
     assert summary["status"] == "READY"
 
-    config = load_config()
-    pat = config.get("pat") or os.environ.get("CORTEX_TRAINING_PAT")
-    if pat:
-        response = requests.post(
-            f"{summary['base_url']}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {pat}",
-                "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
-            },
-            json={
-                "model": summary["deployment"],
-                "messages": [{"role": "user", "content": "Hello"}],
-            },
-            timeout=300,
-        )
-        assert response.status_code == 200, response.text
-        assert response.json()["choices"][0]["message"]["content"]
+    from recipes.model_deployment.streaming import deployment_headers
+
+    response = requests.post(
+        f"{summary['base_url']}/chat/completions",
+        headers=deployment_headers(pat),
+        json={"model": summary["deployment"], "messages": [{"role": "user", "content": "Hello"}]},
+        timeout=300,
+    )
+    skip_if_not_permitted(response.status_code, response.text)
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["content"]
 
     described = run_ok("model-deployment", "describe", summary["deployment"])
     assert described["spec"]["source"] == {"type": "external", "model": model}

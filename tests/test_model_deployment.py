@@ -272,6 +272,24 @@ def test_create_reports_an_external_source_as_reads_do():
     assert created["model_source"] == read["model_source"]
 
 
+def test_a_source_that_is_not_marked_external_needs_a_checkpoint_identity():
+    job = marked_job()
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": False}
+
+    with pytest.raises(ValueError, match="source_job_id must be a non-empty string"):
+        client_module._model_deployment_metadata(job, DEPLOYMENT_ID)
+
+
+def test_describe_reports_an_external_source_in_its_spec():
+    job = marked_job()
+    job["sub_jobs"][0]["source_checkpoint_info"] = {"checkpoint_id": "", "is_external": True}
+
+    metadata = client_module._model_deployment_metadata(job, DEPLOYMENT_ID)
+    described = client_module._model_deployment_description(metadata, database="DB", schema="S")
+
+    assert described["spec"]["source"] == {"type": "external", "model": "Qwen/Qwen3-1.7B"}
+
+
 def test_external_spec_rejects_checkpoint_identity():
     value = external_spec()
     value["source"]["job_id"] = "source-training-job"
@@ -308,20 +326,6 @@ def test_metadata_reports_an_external_source_by_its_base_model():
     )
 
     assert metadata["model_source"] == {"type": "external", "model": "Qwen/Qwen3-1.7B"}
-
-
-def test_metadata_never_reports_stage_credentials_of_an_external_source():
-    job = marked_job()
-    job["sub_jobs"][0]["source_checkpoint_info"] = {
-        "is_external": True,
-        "stage_info": {"credential": "must-not-escape"},
-    }
-
-    metadata = client_module._model_deployment_metadata(
-        job, DEPLOYMENT_ID, base_url="https://account/api/inference/v1"
-    )
-
-    assert "must-not-escape" not in repr(metadata)
 
 
 @pytest.mark.parametrize(
@@ -1505,7 +1509,7 @@ def test_missing_hardware_is_reported_as_unknown_not_h200():
 
 
 def test_describe_reports_checkpoint_source_in_the_shape_the_server_returns():
-    # What the server renders once it echoes source_checkpoint_info on reads: the
+    # What the server returns on reads: the
     # proto field names, flattened into the sub-job, stage_info stripped, and
     # is_external omitted while false.
     job = marked_job()

@@ -134,7 +134,6 @@ from cortex_training.model_deployment import JOB_STATUS_TO_DEPLOYMENT_STATUS
 from cortex_training.model_deployment import MODEL_DEPLOYMENT_CLASS
 from cortex_training.model_deployment import MODEL_DEPLOYMENT_ID_PREFIX
 from cortex_training.model_deployment import ModelDeploymentSpec
-from cortex_training.model_deployment import external_source_read_view
 from cortex_training.model_deployment import OUT_BASE_URL
 from cortex_training.model_deployment import OUT_CREATED_AT
 from cortex_training.model_deployment import OUT_CREATOR
@@ -179,6 +178,7 @@ from cortex_training.model_deployment import WIRE_SOURCE_CHECKPOINT_INFO
 from cortex_training.model_deployment import WIRE_SOURCE_JOB_ID
 from cortex_training.model_deployment import WIRE_TENSOR_PARALLEL_SIZE
 from cortex_training.model_deployment import WIRE_VLLM_CONFIG
+from cortex_training.model_deployment import external_source_read_view
 
 # tenacity renamed wait_exponential_jitter's `initial` to `multiplier` (and warns on
 # `initial`); the oldest supported tenacity has only `initial`.
