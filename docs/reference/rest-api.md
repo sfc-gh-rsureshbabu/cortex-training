@@ -3803,8 +3803,8 @@ under the same rules as `external_stage_path` on a job
 uses a `checkpoint` source instead. `model` is the base model the weights were
 trained from, and `create` sends it as the sub-job's `model_name`. The role
 needs `READ` on the stage. The stage is read once GPUs are assigned, so a wrong
-path, or stage credentials that expired (they last at most 12 hours, as for a
-job import), shows up as a `FAILED` deployment with `failure.code`
+path, or stage credentials that expired (they last at most 12 hours from
+`create`), shows up as a `FAILED` deployment with `failure.code`
 `sub_job_failed` and a message that the sub-job could not download its source
 checkpoint, not as a `create` error.
 
